@@ -237,41 +237,11 @@ jobs:
           name: logseq-win64-builds
           path: builds
 
-  codesign-windows:
-    if: ${{ github.event_name == 'schedule' || github.event.inputs.build-target == 'nightly' || github.event.inputs.build-target == 'beta' }}
-    needs: [ build-windows ]
-    runs-on: [self-hosted, macos, token]
-    steps:
-      - name: Download Windows Artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: logseq-win64-unsigned-builds
-          path: ./builds
-
-      - name: Sign Windows Executable
-        run: |
-          ls -lah ./builds
-          jsign --storetype ETOKEN --storepass "${PASS}" -t http://timestamp.digicert.com ./builds/*.exe
-        env:
-          PASS: ${{ secrets.CODE_SIGN_CERTIFICATE_PASSWORD }}
-
-      - name: Upload Artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: logseq-win64-signed-builds
-          path: builds
-
   nightly-release:
     if: ${{ github.event_name == 'schedule' || github.event.inputs.build-target == 'nightly' }}
-    needs: [ codesign-windows]
+    needs: [build-windows]
     runs-on: ubuntu-20.04
-    steps:
-      - name: Download The Windows Artifact (Signed)
-        uses: actions/download-artifact@v3
-        with:
-          name: logseq-win64-signed-builds
-          path: ./
-
+    steps:\
       - name: Download The Windows Artifact
         uses: actions/download-artifact@v3
         with:
@@ -303,64 +273,5 @@ jobs:
             ./*.dmg
             ./*.exe
             ./*.msi
-            ./*.AppImage
-            ./*.apk
-
-  release:
-    # NOTE: For now, we only have beta channel to be released on Github
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build-target == 'beta' }}
-    needs: [ codesign-windows]
-    runs-on: ubuntu-20.04
-    steps:
-      - name: Download The Windows Artifact (Signed)
-        uses: actions/download-artifact@v3
-        with:
-          name: logseq-win64-signed-builds
-          path: ./
-
-      - name: Download The Windows Artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: logseq-win64-builds
-          path: ./
-
-      - name: List files
-        run: ls -rl
-
-      - name: Retrieve tag version
-        id: ref
-        run: |
-          pkgver=$(cat VERSION)
-          echo "version=$pkgver" >> $GITHUB_OUTPUT
-
-      - name: Fix .nupkg name in RELEASES file
-        run: |
-          sed -i "s/Logseq-.*.nupkg/Logseq-win-x64-${{ steps.ref.outputs.version }}-full.nupkg/g" RELEASES
-
-      - name: Generate SHA256 checksums
-        run: |
-          sha256sum *-win-* >> SHA256SUMS.txt
-          sha256sum RELEASES >> SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Create Release Draft
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.ref.outputs.version }}
-          name: Desktop/Android APP ${{ steps.ref.outputs.version }} (Beta Testing)
-          body: "TODO: Fill this changelog. Sorry for the inconvenience!"
-          draft: ${{ github.event.inputs.is-draft }}
-          prerelease: ${{ github.event.inputs.is-pre-release }}
-          files: |
-            ./VERSION
-            ./SHA256SUMS.txt
-            ./*.zip
-            ./*.dmg
-            ./*.exe
-            ./*.msi
-            ./*.nupkg
-            ./RELEASES
             ./*.AppImage
             ./*.apk
