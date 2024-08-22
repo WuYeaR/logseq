@@ -55,12 +55,6 @@ jobs:
   compile-cljs:
     runs-on: ubuntu-20.04
     steps:
-      - name: Check build options
-        if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build-target == 'nightly' || github.event.inputs.build-target == 'beta') }}
-        run: |
-          echo "::error title=CheckFail::Nightly"
-          exit 1
-
       - name: Check out Git repository
         uses: actions/checkout@v3
         with:
