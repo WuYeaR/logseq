@@ -52,6 +52,14 @@ env:
   JAVA_VERSION: '11'
 
 jobs:
+  sync:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: tgymnich/fork-sync@v1.8
+          with:
+            owner: logseq
+            base: feat/db
+            head: feat/db
   compile-cljs:
     runs-on: ubuntu-20.04
     steps:
