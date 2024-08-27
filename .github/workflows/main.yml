@@ -13,7 +13,7 @@ on:
           - beta
           - nightly
           - non-release
-        default: "non-release"
+        default: "nightly"
       git-ref:
         description: "Release Git Ref (Which branch or tag to build?)"
         required: true
@@ -60,7 +60,6 @@ jobs:
             owner: logseq
             base: feat/db
             head: feat/db
-            merge_method: rebase
             token: ${{ github.token }}
             
   compile-cljs:
