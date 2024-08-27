@@ -61,6 +61,7 @@ jobs:
             base: feat/db
             head: feat/db
             token: ${{ github.token }}
+            ignore_fail: true
             
   compile-cljs:
     runs-on: ubuntu-20.04
