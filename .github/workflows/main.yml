@@ -60,8 +60,10 @@ jobs:
             owner: logseq
             base: feat/db
             head: feat/db
+            
   compile-cljs:
     runs-on: ubuntu-20.04
+    needs: [ sync ]
     steps:
       - name: Check out Git repository
         uses: actions/checkout@v3
