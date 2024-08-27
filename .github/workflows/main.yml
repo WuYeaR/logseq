@@ -60,6 +60,8 @@ jobs:
             owner: logseq
             base: feat/db
             head: feat/db
+            merge_method: rebase
+            token: ${{ github.token }}
             
   compile-cljs:
     runs-on: ubuntu-20.04
