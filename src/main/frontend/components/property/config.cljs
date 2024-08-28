@@ -1,4 +1,4 @@
-(ns frontend.components.property-v2
+(ns frontend.components.property.config
   (:require [clojure.string :as string]
             [frontend.components.dnd :as dnd]
             [frontend.components.icon :as icon-component]
@@ -6,6 +6,7 @@
             [frontend.handler.common.developer :as dev-common-handler]
             [frontend.handler.db-based.property :as db-property-handler]
             [frontend.db :as db]
+            [frontend.db.async :as db-async]
             [frontend.handler.property :as property-handler]
             [frontend.handler.route :as route-handler]
             [frontend.state :as state]
@@ -19,7 +20,8 @@
             [logseq.shui.popup.core :as shui-popup]
             [promesa.core :as p]
             [goog.dom :as gdom]
-            [rum.core :as rum]))
+            [rum.core :as rum]
+            [frontend.db-mixins :as db-mixins]))
 
 (defn- re-init-commands!
   "Update commands after task status and priority's closed values has been changed"
@@ -237,51 +239,83 @@
       value]
      [:a.del {:on-click delete-choice!
               :title "Delete this choice"}
-      (shui/tabler-icon "x" {:size 14})]]))
+      (shui/tabler-icon "x" {:size 16})]]))
 
-(rum/defc choices-sub-pane
+(rum/defc add-existing-values
+  [property values {:keys [toggle-fn]}]
+  [:div.flex.flex-col.gap-1.w-64.p-4.overflow-y-auto
+   {:class "max-h-[50dvh]"}
+   [:div "Existing values:"]
+   [:ol
+    (for [value values]
+      [:li (if (uuid? value)
+             (let [result (db/entity [:block/uuid value])]
+               (db-property/closed-value-content result))
+             (str value))])]
+   (shui/button
+    {:on-click (fn []
+                 (p/let [_ (db-property-handler/add-existing-values-to-closed-values! (:db/id property) values)]
+                   (toggle-fn)))}
+    "Add choices")])
+
+(rum/defc choices-sub-pane < rum/reactive db-mixins/query
   [property]
   (let [values (:property/closed-values property)
         choices (doall
-                  (keep (fn [value]
-                          (when-let [block (db/sub-block (:db/id value))]
-                            (let [id (:block/uuid block)]
-                              {:id (str id)
-                               :value id
-                               :content (choice-item-content property block)})))
-                    values))]
+                 (keep (fn [value]
+                         (when-let [block (db/sub-block (:db/id value))]
+                           (let [id (:block/uuid block)]
+                             {:id (str id)
+                              :value id
+                              :content (choice-item-content property block)})))
+                       values))]
     [:div.ls-property-dropdown-editor.ls-property-choices-sub-pane
      (when (seq choices)
        [:ul.choices-list
         (dnd/items choices
-          {:sort-by-inner-element? false
-           :on-drag-end (fn [_ {:keys [active-id over-id direction]}]
-                          (let [move-down? (= direction :down)
-                                over (db/entity [:block/uuid (uuid over-id)])
-                                active (db/entity [:block/uuid (uuid active-id)])
-                                over-order (:block/order over)
-                                new-order (if move-down?
-                                            (let [next-order (db-order/get-next-order (db/get-db) property (:db/id over))]
-                                              (db-order/gen-key over-order next-order))
-                                            (let [prev-order (db-order/get-prev-order (db/get-db) property (:db/id over))]
-                                              (db-order/gen-key prev-order over-order)))]
+                   {:sort-by-inner-element? false
+                    :on-drag-end (fn [_ {:keys [active-id over-id direction]}]
+                                   (let [move-down? (= direction :down)
+                                         over (db/entity [:block/uuid (uuid over-id)])
+                                         active (db/entity [:block/uuid (uuid active-id)])
+                                         over-order (:block/order over)
+                                         new-order (if move-down?
+                                                     (let [next-order (db-order/get-next-order (db/get-db) property (:db/id over))]
+                                                       (db-order/gen-key over-order next-order))
+                                                     (let [prev-order (db-order/get-prev-order (db/get-db) property (:db/id over))]
+                                                       (db-order/gen-key prev-order over-order)))]
 
-                            (db/transact! (state/get-current-repo)
-                              [{:db/id (:db/id active)
-                                :block/order new-order}
-                               (outliner-core/block-with-updated-at
-                                 {:db/id (:db/id property)})]
-                              {:outliner-op :save-block})))})])
+                                     (db/transact! (state/get-current-repo)
+                                                   [{:db/id (:db/id active)
+                                                     :block/order new-order}
+                                                    (outliner-core/block-with-updated-at
+                                                     {:db/id (:db/id property)})]
+                                                   {:outliner-op :save-block})))})])
 
      ;; add choice
      (dropdown-editor-menuitem
-       {:icon :plus :title "Add choice"
-        :item-props {:on-click (fn [^js e]
-                                 (shui/popup-show! (.-target e)
-                                   ;; TODO: add existing values
-                                   (base-edit-form property {:create? true})
-                                   {:id :ls-base-edit-form
-                                    :align "start"}))}})]))
+      {:icon :plus :title "Add choice"
+       :item-props {:on-click
+                    (fn [^js e]
+                      (p/let [values (db-async/<get-block-property-values (state/get-current-repo) (:db/ident property))
+                              existing-values (seq (:property/closed-values property))
+                              values (if (seq existing-values)
+                                       (let [existing-ids (set (map :db/id existing-values))]
+                                         (remove (fn [id] (existing-ids id)) values))
+                                       values)]
+                        (shui/popup-show! (.-target e)
+                                          (fn [{:keys [id]}]
+                                            (let [opts {:toggle-fn (fn [] (shui/popup-hide! id))}
+                                                  values' (->> (if (contains? db-property-type/ref-property-types (get-in property [:block/schema :type]))
+                                                                 (map #(:block/uuid (db/entity %)) values)
+                                                                 values)
+                                                               (remove string/blank?)
+                                                               distinct)]
+                                              (if (seq values')
+                                                (add-existing-values property values' opts)
+                                                (base-edit-form property {:create? true}))))
+                                          {:id :ls-base-edit-form
+                                           :align "start"})))}})]))
 
 (def position-labels
   {:properties {:icon :layout-distribute-horizontal :title "Block properties"}
@@ -320,21 +354,25 @@
                      (property-handler/remove-block-property! repo (:block/uuid block) (:db/ident property))))]
     (if (and class? class-schema?)
       (-> (shui/dialog-confirm!
-            ;; Only ask for confirmation on class schema properties
-            [:p (str "Are you sure you want to delete this property?")])
-        (p/then remove!))
-      (remove!))))
+           [:p (str "Are you sure you want to delete this property?")]
+           {:id :delete-property-from-class
+            :data-reminder :ok})
+          (p/then remove!))
+      (-> (shui/dialog-confirm!
+           "Are you sure you want to delete the property from this node?"
+           {:id :delete-property-from-node
+            :data-reminder :ok})
+          (p/then remove!)))))
 
 (rum/defc dropdown-editor-impl
-  "popup-id: dropdown popup id
-   property: block entity"
-  [_popup-id property owner-block opts]
+  "property: block entity"
+  [property owner-block {:keys [class-schema? debug?]}]
   (let [title (:block/title property)
         property-schema (:block/schema property)
         property-type (get property-schema :type)
         property-type-label' (some-> property-type (property-type-label))
         enable-closed-values? (contains? db-property-type/closed-value-property-types
-                                (or property-type :default))
+                                         (or property-type :default))
         icon (:logseq.property/icon property)
         icon (when icon [:span.float-left.w-4.h-4.overflow-hidden.leading-4.relative
                          (icon-component/icon icon {:size 15})])
@@ -346,16 +384,16 @@
      (dropdown-editor-menuitem {:icon :hash :title "Property type" :desc (str property-type-label') :disabled? true})
 
      (when enable-closed-values? (empty? (:property/schema.classes property))
-       (let [values (:property/closed-values property)]
-         (dropdown-editor-menuitem {:icon :list :title "Available choices"
-                                    :desc (when (seq values) (str (count values) " choices"))
-                                    :submenu-content (fn [] (choices-sub-pane property))})))
+           (let [values (:property/closed-values property)]
+             (dropdown-editor-menuitem {:icon :list :title "Available choices"
+                                        :desc (when (seq values) (str (count values) " choices"))
+                                        :submenu-content (fn [] (choices-sub-pane property))})))
 
      (let [many? (db-property/many? property)]
        (dropdown-editor-menuitem {:icon :checks :title "Multiple values"
                                   :toggle-checked? many? :disabled? disabled?
                                   :on-toggle-checked-change #(db-property-handler/upsert-property! (:db/ident property)
-                                                               (assoc property-schema :cardinality (if many? :one :many)) {})}))
+                                                                                                   (assoc property-schema :cardinality (if many? :one :many)) {})}))
 
      (shui/dropdown-menu-separator)
      (let [position (:position property-schema)]
@@ -365,39 +403,40 @@
 
      (dropdown-editor-menuitem {:icon :eye-off :title "Hide by default" :toggle-checked? (boolean (:hide? property-schema))
                                 :on-toggle-checked-change #(db-property-handler/upsert-property! (:db/ident property)
-                                                             (assoc property-schema :hide? %) {})})
+                                                                                                 (assoc property-schema :hide? %) {})})
 
-     (shui/dropdown-menu-separator)
-     (dropdown-editor-menuitem
-       {:icon :share-3 :title "Go to the node" :desc ""
-        :item-props {:class "opacity-90 focus:opacity-100"
-                     :on-select (fn []
-                                  (shui/popup-hide-all!)
-                                  (route-handler/redirect-to-page! (:block/uuid property)))}})
-     (dropdown-editor-menuitem
-       {:id :remove-property :icon :square-x :title "Remove property" :desc "" :disabled? false
-        :item-props {:class "opacity-60 focus:opacity-100 focus:!text-red-rx-09"
-                     :on-select (fn [^js e]
-                                  (util/stop e)
-                                  (-> (shui/dialog-confirm!
-                                        "Are you sure you want to delete property from this node?"
-                                        {:id :delete-property-from-node
-                                         :data-reminder :ok})
-                                    (p/then (fn []
-                                              (handle-delete-property! owner-block property {:class-schema? false})
-                                              (shui/popup-hide-all!)))
-                                    (p/catch (fn [] (restore-root-highlight-item! :remove-property)))))}})
-     (when (:debug? opts)
+     (when owner-block
+       (shui/dropdown-menu-separator))
+
+     (when owner-block
+       (dropdown-editor-menuitem
+        {:icon :share-3 :title "Go to the node" :desc ""
+         :item-props {:class "opacity-90 focus:opacity-100"
+                      :on-select (fn []
+                                   (shui/popup-hide-all!)
+                                   (route-handler/redirect-to-page! (:block/uuid property)))}}))
+
+     (when owner-block
+       (dropdown-editor-menuitem
+        {:id :remove-property :icon :square-x :title "Delete property" :desc "" :disabled? false
+         :item-props {:class "opacity-60 focus:opacity-100 focus:!text-red-rx-09"
+                      :on-select (fn [^js e]
+                                   (util/stop e)
+                                   (-> (p/do!
+                                        (handle-delete-property! owner-block property {:class-schema? class-schema?})
+                                        (shui/popup-hide-all!))
+                                       (p/catch (fn [] (restore-root-highlight-item! :remove-property)))))}}))
+     (when debug?
        [:<>
         (shui/dropdown-menu-separator)
         (dropdown-editor-menuitem
-          {:icon :bug :title (str (:db/ident property)) :desc "" :disabled? false
-           :item-props {:class "opacity-60 focus:opacity-100 focus:!text-red-rx-08"
-                        :on-select (fn []
-                                     (dev-common-handler/show-entity-data (:db/id property))
-                                     (shui/popup-hide!))}})])]))
+         {:icon :bug :title (str (:db/ident property)) :desc "" :disabled? false
+          :item-props {:class "opacity-60 focus:opacity-100 focus:!text-red-rx-08"
+                       :on-select (fn []
+                                    (dev-common-handler/show-entity-data (:db/id property))
+                                    (shui/popup-hide!))}})])]))
 
-(rum/defc dropdown-editor < rum/reactive
-  [popup-id property owner-block opts]
-  (let [property1 (db/sub-block (:db/id property))]
-    (dropdown-editor-impl popup-id property1 owner-block opts)))
+(rum/defc dropdown-editor < rum/reactive db-mixins/query
+  [property* owner-block opts]
+  (let [property (db/sub-block (:db/id property*))]
+    (dropdown-editor-impl property owner-block opts)))

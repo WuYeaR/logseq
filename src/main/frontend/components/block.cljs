@@ -1912,7 +1912,7 @@
         order-list-idx     (:own-order-list-index config)
         collapsable?       (editor-handler/collapsable? uuid {:semantic? true})
         link?              (boolean (:original-block config))]
-    [:div.block-control-wrap.flex.flex-row.items-center
+    [:div.block-control-wrap.flex.flex-row.items-center.h-6
      {:class (util/classnames [{:is-order-list order-list?
                                 :bullet-closed collapsed?
                                 :bullet-hidden (:hide-bullet? config)}])}
@@ -2381,22 +2381,23 @@
 
 (rum/defc tags
   "Tags without inline tags"
-  [config block hover?]
+  [config block hover? edit?]
   (when (:block/raw-title block)
     (let [tags' (->>
-                (:block/tags block)
-                (remove (fn [t] (ldb/inline-tag? (:block/raw-title block) t))))
-          block-tags (if (and (not hover?) (= [:logseq.class/Task] (map :db/ident tags')))
+                 (:block/tags block)
+                 (remove (fn [t] (ldb/inline-tag? (:block/raw-title block) t))))
+          block-tags (if (and (not hover?) (not edit?) (= [:logseq.class/Task] (map :db/ident tags')))
                        (remove (fn [t] (= (:db/ident t) :logseq.class/Task)) tags')
                        tags')]
       (when (seq block-tags)
         [:div.block-tags.flex.flex-row.flex-wrap.items-center.gap-1
          (for [tag block-tags]
-           (rum/with-key
-             (page-cp (assoc config
-                             :tag? true
-                             :disable-preview? true) tag)
-             (str "tag-" (:db/id tag))))]))))
+           [:span.h-6
+            (rum/with-key
+              (page-cp (assoc config
+                              :tag? true
+                              :disable-preview? true) tag)
+              (str "tag-" (:db/id tag)))])]))))
 
 (rum/defc block-positioned-properties
   [config block position]
@@ -2409,20 +2410,21 @@
                      :other-position? true})]
     (when (seq properties)
       (case position
-        :block-below
-        [:div.positioned-properties.flex.flex-row.gap-2.item-center.ml-2.pl-8.flex-wrap.text-sm.overflow-x-hidden.max-h-6
-         (for [pid properties]
-           (let [property (db/entity pid)
-                 v (get block pid)]
-             [:div.flex.flex-row.items-center.gap-1.px-1.hover:bg-secondary.rounded
-              [:div.flex.flex-row.opacity-50.hover:opacity-100
-               (property-component/property-key-cp block property opts)
-               [:div.select-none ":"]]
-              (pv/property-value block property v opts)]))]
-        [:div.positioned-properties.right-align.flex.flex-row.items-center.gap-1.select-none.h-6
-         (for [pid properties]
-           (when-let [property (db/entity pid)]
-             (pv/property-value block property (get block pid) (assoc opts :show-tooltip? true))))]))))
+         :block-below
+         [:div.positioned-properties.flex.flex-row.gap-2.item-center.ml-2.pl-8.flex-wrap.text-sm.overflow-x-hidden.max-h-6
+          (for [pid properties]
+            (let [property (db/entity pid)
+                  v (get block pid)]
+              [:div.flex.flex-row.items-center.gap-1.px-1.hover:bg-secondary.rounded
+               [:div.flex.flex-row.opacity-50.hover:opacity-100
+                (property-component/property-key-cp block property opts)
+                [:div.select-none ":"]]
+               (pv/property-value block property v opts)]))]
+         [:div.positioned-properties.right-align.flex.flex-row.gap-1.select-none
+          {:class (if (:page-title? config) "items-center" "items-start")}
+          (for [pid properties]
+            (when-let [property (db/entity pid)]
+              (pv/property-value block property (get block pid) (assoc opts :show-tooltip? true))))]))))
 
 (rum/defc ^:large-vars/cleanup-todo block-content < rum/reactive
   [config {:block/keys [uuid properties scheduled deadline format pre-block?] :as block} edit-input-id block-id slide?]
@@ -2585,7 +2587,8 @@
                      (rum/react *refs-count))
         table? (:table? config)]
     [:div.block-content-or-editor-wrap
-     {:on-mouse-over #(reset! *hover? true)
+     {:class (when (:page-title? config) "ls-page-title-container")
+      :on-mouse-over #(reset! *hover? true)
       :on-mouse-leave #(reset! *hover? false)}
      (when (and db-based? (not table?)) (block-positioned-properties config block :block-left))
      [:div.flex.flex-1.flex-col
@@ -2635,16 +2638,16 @@
                 svg/edit])])])
 
        (when-not (or (:block-ref? config) (:table? config))
-         [:div.flex.flex-row.items-center.gap-1.h-6
-          (when (and db-based? (seq (:block/tags block)))
-            (tags config block @*hover?))])
+         (when (and db-based? (seq (:block/tags block)))
+            (tags (assoc config :block/uuid (:block/uuid block)) block @*hover? edit?)))
 
-       (when-not (:table? config)
+       (when-not (or (:table? config) (:page-title? config))
          (block-refs-count block refs-count *hide-block-refs?))]
 
       (when (and (not (:table? config))
                  (not hide-block-refs?)
-                 (> refs-count 0))
+                 (> refs-count 0)
+                 (not (:page-title? config)))
         (when-let [refs-cp (state/get-component :block/linked-references)]
           (refs-cp uuid)))]]))
 
@@ -3081,7 +3084,9 @@
                          (block-mouse-over e *control-show? block-id doc-mode?))
        :on-mouse-leave (fn [e]
                          (block-mouse-leave e *control-show? block-id doc-mode?))}
-      (when (and (not slide?) (not in-whiteboard?) (not table?))
+
+      (when (and (not slide?) (not in-whiteboard?) (not table?)
+                 (not (:page-title? config)))
         (let [edit? (or editing?
                         (= uuid (:block/uuid (state/get-edit-block))))]
           (block-control config block
@@ -3094,6 +3099,23 @@
       (when (and @*show-left-menu? (not in-whiteboard?) (not table?))
         (block-left-menu config block))
 
+      (when-let [icon (and (ldb/page? block)
+                           (or (get block (pu/get-pid :logseq.property/icon))
+                               (or (when (ldb/class? block)
+                                     {:type :tabler-icon
+                                      :id "hash"})
+                                   (when (ldb/property? block)
+                                     {:type :tabler-icon
+                                      :id "letter-p"}))))]
+        [:div.flex.items-center.page-icon
+         (icon-component/icon-picker icon
+                                    {:on-chosen (fn [_e icon]
+                                                  (db-property-handler/set-block-property!
+                                                   (:db/id block)
+                                                   (pu/get-pid :logseq.property/icon)
+                                                   (select-keys icon [:id :type :color])))
+                                     :icon-props {:size (if (:page-title? config) 38 18)}})])
+
       (if whiteboard-block?
         (block-reference {} (str uuid) nil)
         ;; Not embed self
@@ -3103,10 +3125,10 @@
                                                (= (:block/uuid block) (:embed-id config)))
                                           table?)]
            (block-content-or-editor config block
-                                     {:edit-input-id edit-input-id
-                                      :block-id block-id
-                                      :edit? editing?
-                                      :hide-block-refs-count? hide-block-refs-count?}))])
+                                    {:edit-input-id edit-input-id
+                                     :block-id block-id
+                                     :edit? editing?
+                                     :hide-block-refs-count? hide-block-refs-count?}))])
 
       (when (and @*show-right-menu? (not in-whiteboard?) (not table?))
         (block-right-menu config block editing?))]
@@ -3115,7 +3137,7 @@
        (block-positioned-properties config block :block-below))
 
      (when (and db-based? (not collapsed?) (not table?))
-       [:div {:style {:padding-left 45}}
+       [:div (when-not (:page-title? config) {:style {:padding-left 45}})
         (db-properties-cp config block edit-input-id {:in-block-container? true})])
 
      (when-not (or (:hide-children? config) in-whiteboard? table?)

@@ -1,7 +1,6 @@
 (ns frontend.components.editor
   (:require [clojure.string :as string]
-            [frontend.commands :as commands
-             :refer [*matched-block-commands *matched-commands]]
+            [frontend.commands :as commands :refer [*matched-commands]]
             [frontend.components.datetime :as datetime-comp]
             [frontend.components.svg :as svg]
             [frontend.components.search :as search]
@@ -100,19 +99,6 @@
                 :command command}))))
        :class
        "cp__commands-slash"})))
-
-(rum/defc block-commands < rum/reactive
-  [id format]
-  (when (= :block-commands (state/get-editor-action))
-    (let [matched (util/react *matched-block-commands)]
-      (ui/auto-complete
-        (map first matched)
-        {:on-chosen (fn [chosen]
-                      (editor-handler/insert-command! id (get (into {} matched) chosen)
-                        format
-                        {:last-pattern commands/angle-bracket
-                         :command :block-commands}))
-         :class "black"}))))
 
 (defn- page-on-chosen-handler
   [embed? input id q pos format]
@@ -436,27 +422,26 @@
                                            [:strong mode])
                             :class "code-block-mode-picker"})]))))
 
-(rum/defcs input < rum/reactive
-                   (rum/local {} ::input-value)
-                   (mixins/event-mixin
-                     (fn [state]
-                       (mixins/on-key-down
-                         state
-                         {;; enter
-                          13 (fn [state e]
-                               (let [input-value (get state ::input-value)
-                                     input-option (:options (state/get-editor-show-input))]
-                                 (when (seq @input-value)
+(rum/defcs editor-input < rum/reactive (rum/local {} ::input-value)
+  (mixins/event-mixin
+   (fn [state]
+     (mixins/on-key-down
+      state
+      {;; enter
+       13 (fn [state e]
+            (let [input-value (get state ::input-value)
+                  input-option (:options (state/get-editor-show-input))]
+              (when (seq @input-value)
                                    ;; no new line input
-                                   (util/stop e)
-                                   (let [[_id on-submit] (:rum/args state)
-                                         command (:command (first input-option))]
-                                     (on-submit command @input-value))
-                                   (reset! input-value nil))))
+                (util/stop e)
+                (let [[_id on-submit] (:rum/args state)
+                      command (:command (first input-option))]
+                  (on-submit command @input-value))
+                (reset! input-value nil))))
                           ;; escape
-                          27 (fn [_state _e]
-                               (let [[id _on-submit on-cancel] (:rum/args state)]
-                                 (on-cancel id)))})))
+       27 (fn [_state _e]
+            (let [[id _on-submit on-cancel] (:rum/args state)]
+              (on-cancel id)))})))
   [state _id on-submit _on-cancel]
   (when-let [action-data (state/get-editor-action-data)]
     (let [{:keys [pos options]} action-data
@@ -466,21 +451,21 @@
           [:div.p-2.rounded-md.flex.flex-col.gap-2
            (for [{:keys [id placeholder type]} options]
              (shui/input
-               (cond->
-                 {:key (str "modal-input-" (name id))
-                  :type (or type "text")
-                  :auto-complete (if (util/chrome?) "chrome-off" "off")
-                  :on-change (fn [e]
-                               (swap! input-value assoc id (util/evalue e)))}
+              (cond->
+               {:key (str "modal-input-" (name id))
+                :type (or type "text")
+                :auto-complete (if (util/chrome?) "chrome-off" "off")
+                :on-change (fn [e]
+                             (swap! input-value assoc id (util/evalue e)))}
 
-                 placeholder
-                 (assoc :placeholder placeholder))))
+                placeholder
+                (assoc :placeholder placeholder))))
            (ui/button
-             "Submit"
-             :on-click
-             (fn [e]
-               (util/stop e)
-               (on-submit command @input-value pos)))])))))
+            "Submit"
+            :on-click
+            (fn [e]
+              (util/stop e)
+              (on-submit command @input-value pos)))])))))
 
 (rum/defc image-uploader < rum/reactive
   [id format]
@@ -501,11 +486,11 @@
    {:not-matched-handler (editor-handler/keydown-not-matched-handler format)}))
 
 (defn- set-up-key-up!
-  [state input' input-id]
+  [state input']
   (mixins/on-key-up
    state
    {}
-   (editor-handler/keyup-handler state input' input-id)))
+   (editor-handler/keyup-handler state input')))
 
 (def search-timeout (atom nil))
 
@@ -515,7 +500,7 @@
         input-id id
         input' (gdom/getElement input-id)]
     (set-up-key-down! state format)
-    (set-up-key-up! state input' input-id)))
+    (set-up-key-up! state input')))
 
 (defn get-editor-style-class
   "Get textarea css class according to it's content"
@@ -594,20 +579,26 @@
 
 (defn- open-editor-popup!
   [id content opts]
-  (let [{:keys [left top rect]} (cursor/get-caret-pos (state/get-input))
-        pos [(+ left (:left rect) -20) (+ top (:top rect) 20)]
+  (let [input (state/get-input)
+        line-height (or (when input
+                          (some-> (.-lineHeight (js/window.getComputedStyle input))
+                                  (js/parseFloat)
+                                  (- 4)))
+                        20)
+        {:keys [left top rect]} (cursor/get-caret-pos input)
+        pos [(+ left (:left rect) -20) (+ top (:top rect) line-height)]
         {:keys [root-props content-props]} opts]
     (shui/popup-show!
-      pos content
-      (merge
-        {:id (keyword :editor.commands id)
-         :align :start
-         :root-props (merge {:onOpenChange #(when-not % (state/clear-editor-action!))} root-props)
-         :content-props (merge {:onOpenAutoFocus #(.preventDefault %)
-                                :onCloseAutoFocus #(.preventDefault %)
-                                :data-editor-popup-ref (name id)} content-props)
-         :force-popover? true}
-        (dissoc opts :root-props :content-props)))))
+     pos content
+     (merge
+      {:id (keyword :editor.commands id)
+       :align :start
+       :root-props (merge {:onOpenChange #(when-not % (state/clear-editor-action!))} root-props)
+       :content-props (merge {:onOpenAutoFocus #(.preventDefault %)
+                              :onCloseAutoFocus #(.preventDefault %)
+                              :data-editor-popup-ref (name id)} content-props)
+       :force-popover? true}
+      (dissoc opts :root-props :content-props)))))
 
 (rum/defc shui-editor-popups
   [id format action _data]
@@ -618,11 +609,6 @@
                   (open-editor-popup! :commands
                     (commands id format)
                     {:content-props {:withoutAnimation false}})
-
-                  :block-commands
-                  (open-editor-popup! :block-commands
-                    (block-commands id format)
-                    {:content-props {:withoutAnimation true}})
 
                   (:block-search :page-search :page-search-hashtag)
                   (open-editor-popup! action
@@ -642,7 +628,7 @@
 
                   :input
                   (open-editor-popup! :input
-                    (input id
+                    (editor-input id
                       (fn [command m]
                         (editor-handler/handle-command-input command id format m))
                       (fn []
@@ -693,10 +679,9 @@
       nil
 
       (or (contains?
-           #{:commands :block-commands
-             :page-search :page-search-hashtag :block-search :template-search
-             :property-search :property-value-search
-             :datepicker} action)
+           #{:commands :page-search :page-search-hashtag :block-search :template-search
+             :property-search :property-value-search :datepicker}
+           action)
           (and (keyword? action)
                (= (namespace action) "editor.action")))
       (when e (util/stop e))

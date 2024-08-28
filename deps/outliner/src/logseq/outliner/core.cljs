@@ -257,6 +257,19 @@
           block-uuid (:block/uuid this)
           eid (or db-id (when block-uuid [:block/uuid block-uuid]))
           block-entity (d/entity db eid)
+          page? (ldb/page? block-entity)
+          page-title-changed? (and page? (:block/title m*)
+                                   (not= (:block/title m*) (:block/title block-entity)))
+          m* (if (and db-based? page-title-changed?)
+               (let [page-name (common-util/page-name-sanity-lc (:block/title m*))]
+                 (when (string/blank? page-name)
+                   (throw (ex-info "Page title can't be blank"
+                                   {:type :notification
+                                    :payload {:message "Page title can't be blank"
+                                              :type :error}
+                                    :node m*})))
+                 (assoc m* :block/name page-name))
+               m*)
           m (cond-> m*
               db-based?
               (dissoc :block/priority :block/marker :block/properties-order))]

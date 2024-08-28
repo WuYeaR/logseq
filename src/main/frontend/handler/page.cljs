@@ -149,8 +149,6 @@
                     (outliner-op/rename-page! page-uuid new-name))
             result' (ldb/read-transit-str result)]
       (case (if (string? result') (keyword result') result')
-        :built-in-page
-        (notification/show! "Built-in page's name cannot be modified" :warning)
         :invalid-empty-name
         (notification/show! "Please use a valid name, empty name is not allowed!" :warning)
         :rename-page-exists
@@ -446,9 +444,8 @@
                           (plugin-handler/hook-plugin-app :today-journal-created {:title today-page})))]
           (when (db/page-empty? repo today-page)
             (if (config/db-based-graph? repo)
-              (let [page-exists (db/get-page today-page)]
-                (when-not page-exists
-                  (create-f)))
+              (when-not (model/get-journal-page title)
+                (create-f))
               (p/let [file-name (date/journal-title->default title)
                       file-rpath (str (config/get-journals-directory) "/" file-name "."
                                       (config/get-file-extension format))
@@ -502,14 +499,6 @@
      (util/copy-to-clipboard!
       (url-util/get-logseq-graph-page-url nil (state/get-current-repo) (str page-uuid)))
      (notification/show! "No page found to copy" :warning))))
-
-(defn toggle-properties!
-  [page-entity]
-  (let [e (db/entity (:db/id page-entity))]
-    (property-handler/set-block-property! (state/get-current-repo)
-                                         (:block/uuid page-entity)
-                                         :logseq.property/hide-properties?
-                                         (not (:logseq.property/hide-properties? e)))))
 
 (defn convert-to-tag!
   [page-entity]

@@ -284,10 +284,9 @@
   ([block value
     {:keys [force?]
      :as opts}]
-   (let [{:block/keys [uuid page format repo title properties]} block
+   (let [{:block/keys [uuid format repo title properties]} block
          repo (or repo (state/get-current-repo))
          format (or format (state/get-preferred-format))
-         page (db/entity repo (:db/id page))
          block-id (when (and (not (config/db-based-graph? repo)) (map? properties))
                     (get properties :id))
          content (if (config/db-based-graph? repo)
@@ -307,7 +306,7 @@
        :else
        (when content
          (let [content-changed? (not= (string/trim content) (string/trim value))]
-           (when (and content-changed? page)
+           (when content-changed?
              (save-block-inner! block value opts))))))))
 
 (defn- compute-fst-snd-block-text
@@ -1103,12 +1102,14 @@
         (let [repo (state/get-current-repo)
               block-uuids (distinct (map #(uuid (dom/attr % "blockid")) dom-blocks))
               lookup-refs (map (fn [id] [:block/uuid id]) block-uuids)
-              blocks (db/pull-many repo '[*] lookup-refs)
-              top-level-blocks (block-handler/get-top-level-blocks blocks)
+              blocks (->> (map db/entity lookup-refs)
+                          (remove ldb/page?))
+              top-level-blocks (when (seq blocks) (block-handler/get-top-level-blocks blocks))
               sorted-blocks (mapcat (fn [block]
                                       (tree/get-sorted-block-and-children repo (:db/id block)))
                                     top-level-blocks)]
-          (delete-blocks! repo (map :block/uuid sorted-blocks) sorted-blocks dom-blocks))))))
+          (when (seq sorted-blocks)
+            (delete-blocks! repo (map :block/uuid sorted-blocks) sorted-blocks dom-blocks)))))))
 
 (def url-regex
   "Didn't use link/plain-link as it is incorrectly detects words as urls."
@@ -1330,19 +1331,7 @@
       (let [value (string/trim value)]
         ;; FIXME: somehow frontend.components.editor's will-unmount event will loop forever
         ;; maybe we shouldn't save the block/file in "will-unmount" event?
-        (if (ldb/page? entity)
-          (let [existing-tags (:block/tags block)
-                tags (mldoc/extract-tags value)]
-            (when (seq tags)
-              (let [tag-pages (concat
-                               (map #(block/page-name->map % true) tags)
-                               (map :db/id existing-tags))
-                    opts {:outliner-op :save-block}]
-                (ui-outliner-tx/transact!
-                 opts
-                 (outliner-save-block! {:db/id (:db/id block)
-                                        :block/tags tag-pages})))))
-          (save-block-if-changed! block value opts))))))
+        (save-block-if-changed! block value opts)))))
 
 (defn save-block!
   ([repo block-or-uuid content]
@@ -1736,25 +1725,6 @@
       (js/console.error e)
       nil)))
 
-(defn get-matched-block-commands
-  [input]
-  (try
-    (let [edit-content (gobj/get input "value")
-          pos (cursor/pos input)
-          last-command (subs edit-content
-                             (:pos (:pos (state/get-editor-action-data)))
-                             pos)]
-      (when (> pos 0)
-        (or
-         (and (= \< (util/nth-safe edit-content (dec pos)))
-              (commands/block-commands-map))
-         (and last-command
-              (commands/get-matched-commands
-               last-command
-               (commands/block-commands-map))))))
-    (catch :default _error
-      nil)))
-
 (defn auto-complete?
   []
   (or @*asset-uploading?
@@ -1946,12 +1916,6 @@
         (state/set-editor-action-data! {:pos (cursor/get-caret-pos input)})
         (commands/reinit-matched-commands!)
         (state/set-editor-show-commands!))
-
-      (and (not db-based?) (= last-input-char commands/angle-bracket))
-      (do
-        (state/set-editor-action-data! {:pos (cursor/get-caret-pos input)})
-        (commands/reinit-matched-block-commands!)
-        (state/set-editor-show-block-commands!))
 
       (and (= last-input-char last-prev-input-char commands/colon)
            (or (nil? prev-prev-input-char)
@@ -2803,7 +2767,7 @@
                 (delete-block! repo))))
 
           (and (> current-pos 0)
-            (contains? #{commands/command-trigger commands/angle-bracket commands/command-ask}
+            (contains? #{commands/command-trigger commands/command-ask}
               (util/nth-safe value (dec current-pos))))
           (do
             (util/stop e)
@@ -3000,7 +2964,7 @@
        (> current-pos 0)))
 
 (defn- default-case-for-keyup-handler
-  [input current-pos k code is-processed? c]
+  [input current-pos k code is-processed?]
   (let [last-key-code (state/get-last-key-code)
         blank-selected? (string/blank? (util/get-selected-text))
         non-enter-processed? (and is-processed? ;; #3251
@@ -3051,21 +3015,11 @@
             (commands/handle-step [:editor/search-block :reference])
             (state/set-editor-action-data! {:pos (cursor/get-caret-pos input)}))
 
-         ;; Handle non-ascii angle brackets
-          (and (= "〈" c)
-               (= "《" (util/nth-safe (gobj/get input "value") (dec (dec current-pos))))
-               (> current-pos 0))
-          (do
-            (commands/handle-step [:editor/input commands/angle-bracket {:last-pattern "《〈"
-                                                                         :backward-pos 0}])
-            (state/set-editor-action-data! {:pos (cursor/get-caret-pos input)})
-            (state/set-editor-show-block-commands!))
-
           :else
           nil)))))
 
 (defn keyup-handler
-  [_state input input-id]
+  [_state input]
   (fn [e key-code]
     (when-not (util/goog-event-is-composing? e)
       (let [current-pos (cursor/pos input)
@@ -3105,32 +3059,8 @@
                 (reset! commands/*matched-commands matched-commands)
                 (state/clear-editor-action!))))
 
-          ;; When you type search text after < (and when you release shift after typing <)
-          (and (not (config/db-based-graph? (state/get-current-repo))) (= :block-commands (state/get-editor-action)) (not= key-code 188)) ; not <
-          (let [matched-block-commands (get-matched-block-commands input)
-                format (:format (get-state))]
-            (if (seq matched-block-commands)
-              (cond
-                (= key-code 9)          ;tab
-                (do
-                  (util/stop e)
-                  (insert-command! input-id
-                                   (last (first matched-block-commands))
-                                   format
-                                   {:last-pattern commands/angle-bracket
-                                    :command :block-commands}))
-
-                :else
-                (reset! commands/*matched-block-commands matched-block-commands))
-              (state/clear-editor-action!)))
-
-          ;; When you type two spaces after a command character (may always just be handled by the above instead?)
-          (and (contains? #{:block-commands} (state/get-editor-action))
-               (= c (util/nth-safe value (dec (dec current-pos))) " "))
-          (state/clear-editor-action!)
-
           :else
-          (default-case-for-keyup-handler input current-pos k code is-processed? c))
+          (default-case-for-keyup-handler input current-pos k code is-processed?))
 
         (close-autocomplete-if-outside input)
 
