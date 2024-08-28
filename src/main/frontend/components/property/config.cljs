@@ -21,7 +21,12 @@
             [promesa.core :as p]
             [goog.dom :as gdom]
             [rum.core :as rum]
-            [frontend.db-mixins :as db-mixins]))
+            [frontend.db-mixins :as db-mixins]
+            [frontend.components.property.value :as pv]
+            [frontend.components.select :as select]
+            [frontend.db.model :as model]
+            [frontend.handler.page :as page-handler]
+            [frontend.ui :as ui]))
 
 (defn- re-init-commands!
   "Update commands after task status and priority's closed values has been changed"
@@ -64,6 +69,81 @@
         (:db/id property)
         :logseq.property/description description))))
 
+(defn- <create-class-if-not-exists!
+  [value]
+  (when (string? value)
+    (let [page-name (string/trim value)]
+      (when-not (string/blank? page-name)
+        (p/let [page (page-handler/<create-class! page-name {:redirect? false
+                                                             :create-first-block? false})]
+          (:block/uuid page))))))
+
+(rum/defc class-select
+  [property {:keys [multiple-choices? disabled? default-open? no-class? on-hide]
+             :or {multiple-choices? true}}]
+  (let [*ref (rum/use-ref nil)]
+    (rum/use-effect!
+     (fn []
+       (when default-open?
+         (some-> (rum/deref *ref)
+                 (.click))))
+     [default-open?])
+    (let [schema-classes (:property/schema.classes property)]
+      [:div.flex.flex-1.col-span-3
+       (let [content-fn
+             (fn [{:keys [id]}]
+               (let [toggle-fn #(do
+                                  (when (fn? on-hide) (on-hide))
+                                  (shui/popup-hide! id))
+                     classes (model/get-all-classes (state/get-current-repo) {:except-root-class? true})
+                     options (map (fn [class]
+                                    {:label (:block/title class)
+                                     :value (:block/uuid class)})
+                                  classes)
+                     options (if no-class?
+                               (cons {:label "Skip choosing tag"
+                                      :value :no-tag}
+                                     options)
+                               options)
+                     opts {:items options
+                           :input-default-placeholder (if multiple-choices? "Choose tags" "Choose tag")
+                           :dropdown? false
+                           :close-modal? false
+                           :multiple-choices? multiple-choices?
+                           :selected-choices (map :block/uuid schema-classes)
+                           :extract-fn :label
+                           :extract-chosen-fn :value
+                           :show-new-when-not-exact-match? true
+                           :input-opts {:on-key-down
+                                        (fn [e]
+                                          (case (util/ekey e)
+                                            "Escape"
+                                            (do
+                                              (util/stop e)
+                                              (toggle-fn))
+                                            nil))}
+                           :on-chosen (fn [value select?]
+                                        (if (= value :no-tag)
+                                          (toggle-fn)
+                                          (p/let [result (<create-class-if-not-exists! value)
+                                                 value' (or result value)
+                                                 tx-data [[(if select? :db/add :db/retract) (:db/id property) :property/schema.classes [:block/uuid value']]]
+                                                 _ (db/transact! (state/get-current-repo) tx-data {:outliner-op :update-property})]
+                                           (when-not multiple-choices? (toggle-fn)))))}]
+
+                 (select/select opts)))]
+
+         [:div.flex.flex-1.cursor-pointer
+          {:ref *ref
+           :on-click (if disabled?
+                       (constantly nil)
+                       #(shui/popup-show! (.-target %) content-fn))}
+          (if (seq schema-classes)
+            [:div.flex.flex-1.flex-row.items-center.flex-wrap.gap-2
+             (for [class schema-classes]
+               [:a.text-sm (str "#" (:block/title class))])]
+            (pv/property-empty-btn-value))])])))
+
 (rum/defc name-edit-pane
   [property {:keys [set-sub-open! disabled?]}]
   (let [*form-data (rum/use-ref {:icon (:logseq.property/icon property)
@@ -90,6 +170,7 @@
       (icon-component/icon-picker (:icon form-data)
         {:on-chosen (fn [_e icon] (set-form-data! (assoc form-data :icon icon)))
          :popup-opts {:align "start"}
+         :del-btn? (boolean (:icon form-data))
          :empty-label "?"})
       (shui/input {:ref *input-ref :size "sm" :default-value title :placeholder "name"
                    :disabled disabled? :on-change (fn [^js e] (set-form-data! (assoc form-data :title (util/trim-safe (util/evalue e)))))})]
@@ -142,6 +223,7 @@
         (:icon form-data)
         {:on-chosen (fn [_e icon] (set-form-data! (assoc form-data :icon icon)))
          :empty-label "?"
+         :del-btn? (boolean (:icon form-data))
          :popup-opts {:align "start"}})
 
       (shui/input {:ref *input-ref :size "sm"
@@ -170,8 +252,8 @@
 
 (rum/defc dropdown-editor-menuitem
   [{:keys [id icon title desc submenu-content item-props sub-content-props disabled? toggle-checked? on-toggle-checked-change]}]
-
-  (let [[sub-open? set-sub-open!] (rum/use-state false)
+  (let [submenu-content (when-not disabled? submenu-content)
+        [sub-open? set-sub-open!] (rum/use-state false)
         toggle? (boolean? toggle-checked?)
         id1 (str (or id icon (random-uuid)))
         id2 (str "d2-" id1)
@@ -201,7 +283,8 @@
       [:div.inner-wrap
        {:class (util/classnames [{:disabled disabled?}])}
        [:strong
-        (some-> icon (name) (shui/tabler-icon))
+        (some-> icon (name) (shui/tabler-icon {:size 14
+                                               :style {:margin-top "-1"}}))
         [:span title]]
        (if (fn? desc) (desc)
          (if (boolean? toggle-checked?)
@@ -230,6 +313,7 @@
      (shui/button {:size "sm" :variant :outline}
        (icon-component/icon-picker icon {:on-chosen (fn [_e icon] (update-icon! icon))
                                          :popup-opts {:align "start"}
+                                         :del-btn? (boolean icon)
                                          :empty-label "?"}))
      [:strong {:on-click (fn [^js e]
                            (shui/popup-show! (.-target e)
@@ -364,9 +448,33 @@
             :data-reminder :ok})
           (p/then remove!)))))
 
+(rum/defc property-type-sub-pane
+  [property {:keys [id set-sub-open! _position]}]
+  (let [handle-select! (fn [^js e]
+                         (when-let [v (some-> (.-target e) (.-dataset) (.-value))]
+                           (p/do!
+                             (db-property-handler/upsert-property!
+                             (:db/ident property)
+                             (assoc (:block/schema property) :type (keyword v))
+                             {})
+                             (set-sub-open! false)
+                             (restore-root-highlight-item! id))))
+        item-props {:on-select handle-select!}
+        schema-types (->> db-property-type/user-built-in-property-types
+                          (map (fn [type]
+                                 {:label (property-type-label type)
+                                  :value type})))]
+    [:div.ls-property-dropdown-editor.ls-property-type-sub-pane
+     (for [{:keys [label value]} schema-types]
+       (let [option {:id label
+                     :title label
+                     :desc ""
+                     :item-props (assoc item-props :data-value value)}]
+         (dropdown-editor-menuitem option)))]))
+
 (rum/defc dropdown-editor-impl
   "property: block entity"
-  [property owner-block {:keys [class-schema? debug?]}]
+  [property owner-block values {:keys [class-schema? debug?]}]
   (let [title (:block/title property)
         property-schema (:block/schema property)
         property-type (get property-schema :type)
@@ -379,11 +487,32 @@
         built-in? (ldb/built-in? property)
         disabled? (or built-in? config/publishing?)]
     [:<>
-     (dropdown-editor-menuitem {:icon :edit :title "Property name" :desc [:span.flex.items-center.gap-1 icon title]
+     (dropdown-editor-menuitem {:icon :pencil :title "Property name" :desc [:span.flex.items-center.gap-1 icon title]
                                 :submenu-content (fn [ops] (name-edit-pane property (assoc ops :disabled? disabled?)))})
-     (dropdown-editor-menuitem {:icon :hash :title "Property type" :desc (str property-type-label') :disabled? true})
+     (let [disabled?' (or disabled? (and property-type (seq values)))]
+       (dropdown-editor-menuitem {:icon :letter-t
+                                  :title "Property type"
+                                  :desc (if disabled?'
+                                          (ui/tippy {:html        [:div.w-96
+                                                                   "The type of this property is locked once you start using it. This is to make sure all your existing information stays correct if the property type is changed later. To unlock, all uses of a property must be deleted."]
+                                                     :class       "tippy-hover ml-2"
+                                                     :interactive true
+                                                     :disabled    false}
+                                                    (str property-type-label'))
+                                          (str property-type-label'))
+                                  :disabled? disabled?'
+                                  :submenu-content (fn [ops]
+                                                     (property-type-sub-pane property ops))}))
 
-     (when enable-closed-values? (empty? (:property/schema.classes property))
+     (when (= property-type :node)
+       (dropdown-editor-menuitem {:icon :hash
+                                  :title "Specify node tags"
+                                  :desc ""
+                                  :submenu-content (fn [_ops]
+                                                     [:div.px-4
+                                                      (class-select property {:default-open? false})])}))
+
+     (when enable-closed-values?
            (let [values (:property/closed-values property)]
              (dropdown-editor-menuitem {:icon :list :title "Available choices"
                                         :desc (when (seq values) (str (count values) " choices"))
@@ -391,7 +520,8 @@
 
      (let [many? (db-property/many? property)]
        (dropdown-editor-menuitem {:icon :checks :title "Multiple values"
-                                  :toggle-checked? many? :disabled? disabled?
+                                  :toggle-checked? many?
+                                  :disabled? (or disabled? (not (contains? db-property-type/cardinality-property-types property-type)))
                                   :on-toggle-checked-change #(db-property-handler/upsert-property! (:db/ident property)
                                                                                                    (assoc property-schema :cardinality (if many? :one :many)) {})}))
 
@@ -410,7 +540,7 @@
 
      (when owner-block
        (dropdown-editor-menuitem
-        {:icon :share-3 :title "Go to the node" :desc ""
+        {:icon :share-3 :title "Go to this property" :desc ""
          :item-props {:class "opacity-90 focus:opacity-100"
                       :on-select (fn []
                                    (shui/popup-hide-all!)
@@ -418,8 +548,8 @@
 
      (when owner-block
        (dropdown-editor-menuitem
-        {:id :remove-property :icon :square-x :title "Delete property" :desc "" :disabled? false
-         :item-props {:class "opacity-60 focus:opacity-100 focus:!text-red-rx-09"
+        {:id :remove-property :icon :x :title "Remove property" :desc "" :disabled? false
+         :item-props {:class "opacity-60 focus:!text-red-rx-09 focus:opacity-100"
                       :on-select (fn [^js e]
                                    (util/stop e)
                                    (-> (p/do!
@@ -436,7 +566,18 @@
                                     (dev-common-handler/show-entity-data (:db/id property))
                                     (shui/popup-hide!))}})])]))
 
-(rum/defc dropdown-editor < rum/reactive db-mixins/query
-  [property* owner-block opts]
-  (let [property (db/sub-block (:db/id property*))]
-    (dropdown-editor-impl property owner-block opts)))
+(rum/defcs dropdown-editor < rum/reactive db-mixins/query
+  {:init (fn [state]
+           (let [*values (atom :loading)
+                 repo (state/get-current-repo)
+                 property (first (:rum/args state))
+                 ident (:db/ident property)]
+             (p/let [_ (db-async/<get-block repo (:block/uuid property))
+                     result (db-async/<get-block-property-values repo ident)]
+               (reset! *values result))
+             (assoc state ::values *values)))}
+  [state property* owner-block opts]
+  (let [property (db/sub-block (:db/id property*))
+        values (rum/react (::values state))]
+    (when-not (= :loading values)
+        (dropdown-editor-impl property owner-block values opts))))

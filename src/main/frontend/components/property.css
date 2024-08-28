@@ -374,7 +374,7 @@ a.control-link {
       }
 
       > .ui__button {
-        @apply !p-0 !w-7 !h-7 overflow-hidden;
+        @apply !p-0 !w-7 !h-7 overflow-hidden flex-shrink-0;
       }
 
       > a.del {
@@ -384,6 +384,9 @@ a.control-link {
 
       &:hover a.del {
         @apply flex;
+      }
+      &:hover .ls-icon-grip-vertical {
+        @apply opacity-80;
       }
     }
   }

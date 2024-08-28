@@ -305,7 +305,7 @@
   (rum/local nil ::hover)
   {:init (fn [s]
            (assoc s ::color (atom (storage/get :ls-icon-color-preset))))}
-  [state {:keys [on-chosen] :as opts}]
+  [state {:keys [on-chosen del-btn?] :as opts}]
   (let [*q (::q state)
         *result (::result state)
         *tab (::tab state)
@@ -333,7 +333,7 @@
                      64))]
     [:div.cp__emoji-icon-picker
      ;; header
-     [:div.hd
+     [:div.hd.bg-popover
       (tab-observer @*tab {:reset-q! reset-q!})
       (when @*select-mode?
         (select-observer *input-ref))
@@ -402,22 +402,29 @@
                  :class (util/classnames [{:active active?} "tab-item"])
                  :on-click #(reset! *tab id)}
                 label)))]
+
          (when (not= :emoji @*tab)
-           (color-picker *color))]
+           (color-picker *color))
+
+         ;; action buttons
+         (when del-btn?
+           (shui/button {:variant :outline :size :sm :data-action "del"
+                         :on-click #(on-chosen nil)}
+             (shui/tabler-icon "trash" {:size 17})))]
 
         ;; preview
         [:div.hover-preview
          [:strong (:name @*hover)]
          [:button
-          {:style {:font-size 30}
+          {:style {:font-size 28}
            :key   (:id @*hover)
            :title (:name @*hover)}
           (if (= :tabler-icon (:type @*hover))
-            (ui/icon (:icon @*hover) {:size 30})
+            (ui/icon (:icon @*hover) {:size 28})
             (:native (first (:skins @*hover))))]])]]))
 
 (rum/defc icon-picker
-  [icon-value {:keys [empty-label disabled? initial-open? on-chosen icon-props popup-opts]}]
+  [icon-value {:keys [empty-label disabled? initial-open? del-btn? on-chosen icon-props popup-opts]}]
   (let [*trigger-ref (rum/use-ref nil)
         content-fn
         (if config/publishing?
@@ -426,7 +433,8 @@
             (icon-search
              {:on-chosen (fn [e icon-value]
                            (on-chosen e icon-value)
-                           (shui/popup-hide! id))})))]
+                           (shui/popup-hide! id))
+              :del-btn? del-btn?})))]
     (rum/use-effect!
      (fn []
        (when initial-open?
