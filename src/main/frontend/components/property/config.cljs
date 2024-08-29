@@ -137,11 +137,14 @@
           {:ref *ref
            :on-click (if disabled?
                        (constantly nil)
-                       #(shui/popup-show! (.-target %) content-fn))}
+                       #(shui/popup-show! (.-target %) content-fn {:id :ls-node-tags-sub-pane}))}
           (if (seq schema-classes)
             [:div.flex.flex-1.flex-row.items-center.flex-wrap.gap-2
+             {:class "max-w-[300px]"}
              (for [class schema-classes]
-               [:a.text-sm (str "#" (:block/title class))])]
+               [:a.text-sm (str "#" (:block/title class))])
+             [:span.opacity-60.pl-1.top-1.relative.hover:opacity-80.active:opacity-60
+              (shui/tabler-icon "edit")]]
             (pv/property-empty-btn-value))])])))
 
 (rum/defc name-edit-pane
@@ -200,14 +203,14 @@
                                     (p/finally #(set-saving! false))))}
           "Save")])]))
 
-(rum/defc base-edit-form
+(rum/defc choice-base-edit-form
   [own-property block]
   (let [create? (:create? block)
         uuid (:block/uuid block)
         *form-data (rum/use-ref
-                     {:value (or (:block/title block) "")
+                     {:value (or (str (db-property/closed-value-content block)) "")
                       :icon (:logseq.property/icon block)
-                      :description ""})
+                      :description (or (db-property/property-value-content (:logseq.property/description block)) "")})
         [form-data, set-form-data!] (rum/use-state (rum/deref *form-data))
         *input-ref (rum/use-ref nil)]
 
@@ -259,7 +262,8 @@
         id2 (str "d2-" id1)
         or-close-menu-sub! (fn []
                              (when (and (not (shui-popup/get-popup :ls-icon-picker))
-                                     (not (shui-popup/get-popup :ls-base-edit-form)))
+                                     (not (shui-popup/get-popup :ls-base-edit-form))
+                                     (not (shui-popup/get-popup :ls-node-tags-sub-pane)))
                                (set-sub-open! false)
                                (restore-root-highlight-item! id1)))
         wrap-menuitem (if submenu-content
@@ -317,7 +321,7 @@
                                          :empty-label "?"}))
      [:strong {:on-click (fn [^js e]
                            (shui/popup-show! (.-target e)
-                             (fn [] (base-edit-form property block))
+                             (fn [] (choice-base-edit-form property block))
                              {:id :ls-base-edit-form
                               :align "start"}))}
       value]
@@ -397,7 +401,7 @@
                                                                distinct)]
                                               (if (seq values')
                                                 (add-existing-values property values' opts)
-                                                (base-edit-form property {:create? true}))))
+                                                (choice-base-edit-form property {:create? true}))))
                                           {:id :ls-base-edit-form
                                            :align "start"})))}})]))
 
@@ -472,7 +476,7 @@
                      :item-props (assoc item-props :data-value value)}]
          (dropdown-editor-menuitem option)))]))
 
-(rum/defc dropdown-editor-impl
+(rum/defc ^:large-vars/cleanup-todo dropdown-editor-impl
   "property: block entity"
   [property owner-block values {:keys [class-schema? debug?]}]
   (let [title (:block/title property)
@@ -522,8 +526,16 @@
        (dropdown-editor-menuitem {:icon :checks :title "Multiple values"
                                   :toggle-checked? many?
                                   :disabled? (or disabled? (not (contains? db-property-type/cardinality-property-types property-type)))
-                                  :on-toggle-checked-change #(db-property-handler/upsert-property! (:db/ident property)
-                                                                                                   (assoc property-schema :cardinality (if many? :one :many)) {})}))
+                                  :on-toggle-checked-change
+                                  (fn []
+                                    (let [update-cardinality-fn #(db-property-handler/upsert-property! (:db/ident property)
+                                                                                                       (assoc property-schema :cardinality (if many? :one :many)) {})]
+                                      ;; Only show dialog for existing values as it can be reversed for unused properties
+                                      (if (and (seq values) (not many?))
+                                        (-> (shui/dialog-confirm!
+                                             "This action cannot be undone. Do you want to change this property to have multiple values?")
+                                            (p/then update-cardinality-fn))
+                                        (update-cardinality-fn))))}))
 
      (shui/dropdown-menu-separator)
      (let [position (:position property-schema)]
@@ -548,14 +560,14 @@
 
      (when owner-block
        (dropdown-editor-menuitem
-        {:id :remove-property :icon :x :title "Remove property" :desc "" :disabled? false
+        {:id :delete-property :icon :x :title "Delete property" :desc "" :disabled? false
          :item-props {:class "opacity-60 focus:!text-red-rx-09 focus:opacity-100"
                       :on-select (fn [^js e]
                                    (util/stop e)
                                    (-> (p/do!
                                         (handle-delete-property! owner-block property {:class-schema? class-schema?})
                                         (shui/popup-hide-all!))
-                                       (p/catch (fn [] (restore-root-highlight-item! :remove-property)))))}}))
+                                       (p/catch (fn [] (restore-root-highlight-item! :delete-property)))))}}))
      (when debug?
        [:<>
         (shui/dropdown-menu-separator)
