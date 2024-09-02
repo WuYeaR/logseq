@@ -90,7 +90,8 @@
             [electron.ipc :as ipc]
             [frontend.db.async :as db-async]
             [logseq.db.frontend.content :as db-content]
-            [logseq.db :as ldb]))
+            [logseq.db :as ldb]
+            [frontend.components.title :as title]))
 
 ;; local state
 (defonce *dragging?
@@ -546,7 +547,7 @@
    page-name-in-block is the overridable name of the page (legacy)
 
    All page-names are sanitized except page-name-in-block"
-  [state {:keys [contents-page? whiteboard-page? html-export? meta-click?] :as config} page-entity children label]
+  [state {:keys [contents-page? whiteboard-page? html-export? meta-click? show-unique-title?] :as config} page-entity children label]
   (let [*hover? (::hover? state)
         *mouse-down? (::mouse-down? state)
         tag? (:tag? config)
@@ -617,6 +618,9 @@
 
           (coll? label)
           (->elem :span (map-inline config label))
+
+          show-unique-title?
+          (title/block-unique-title page-entity)
 
           :else
           (let [title (:block/title page-entity)
@@ -3653,7 +3657,8 @@
                           set-wrap-h! (debounce set-wrap-h! 16)
                           ob (js/ResizeObserver.
                                (fn []
-                                 (when-let [h (.-height (.-style target))]
+                                 (when-let [h (and (rum/deref *wrap-ref)
+                                                (.-height (.-style target)))]
                                    ;(prn "==>> debug: " h)
                                    (set-wrap-h! h))))]
                       (.observe ob target)
