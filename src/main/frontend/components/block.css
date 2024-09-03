@@ -203,7 +203,11 @@
   @apply inline;
 
   > .ui__checkbox {
-    @apply relative top-[3px];
+    @apply relative top-[2px];
+
+    > span {
+      @apply h-full;
+    }
   }
 
   &.as-heading {
@@ -867,6 +871,9 @@ html.is-mac {
 .block-tags {
     @apply flex flex-row flex-wrap self-start items-center gap-1;
     max-width: 256px;
+}
+.block-tag {
+    @apply flex text-sm h-6 items-center;
 }
 .block-tag span {
     @apply whitespace-nowrap overflow-hidden;

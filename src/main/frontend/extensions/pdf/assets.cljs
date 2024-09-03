@@ -30,18 +30,31 @@
             [rum.core :as rum]
             [fipp.edn :refer [pprint]]))
 
+(defn get-in-repo-assets-full-filename
+  [url]
+  (let [repo-dir (config/get-repo-dir (state/get-current-repo))]
+    (when (some-> url (string/trim) (string/includes? repo-dir))
+      (some-> (string/split url repo-dir)
+        (last)
+        (string/replace-first "/assets/" "")))))
+
 (defn inflate-asset
   [original-path & {:keys [href]}]
-  (let [filename  (util/node-path.basename original-path)
-        web-link? (string/starts-with? original-path "http")
+  (let [web-link? (string/starts-with? original-path "http")
+        blob-res? (some-> href (string/starts-with? "blob"))
+        filename  (util/node-path.basename original-path)
         ext-name  (util/get-file-ext filename)
-        url       (if (and href (string/starts-with? href "blob"))
-                    href
+        url       (if blob-res? href
                     (assets-handler/normalize-asset-resource-url original-path))
-        filekey   (util/safe-sanitize-file-name (subs filename 0 (- (count filename) (inc (count ext-name)))))]
+        filename' (if (or web-link? blob-res?) filename
+                    (some-> (get-in-repo-assets-full-filename url)
+                      (js/decodeURIComponent) (string/replace ' "/" "_")))
+        filekey   (util/safe-sanitize-file-name
+                    (subs filename' 0 (- (count filename') (inc (count ext-name)))))]
     (when-let [key (and (not (string/blank? filekey))
-                        (if web-link?
-                          (str filekey "__" (hash url)) filekey))]
+                     (if web-link?
+                       (str filekey "__" (hash url))
+                       filekey))]
 
       {:key           key
        :identity      (subs key (- (count key) 15))

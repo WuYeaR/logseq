@@ -160,7 +160,7 @@
 (def data-from-ws-coercer (m/coercer data-from-ws-schema mt/string-transformer))
 (def data-from-ws-validator (m/validator data-from-ws-schema))
 
-(def data-to-ws-schema
+(def ^:large-vars/data-var data-to-ws-schema
   (mu/closed-schema
    [:multi {:dispatch :action}
     ["list-graphs"
@@ -173,12 +173,17 @@
       [:action :string]
       [:graph-uuid :string]]]
     ["apply-ops"
-     [:map
-      [:req-id :string]
-      [:action :string]
-      [:graph-uuid :string]
-      [:ops [:sequential to-ws-op-schema]]
-      [:t-before :int]]]
+     [:or
+      [:map
+       [:req-id :string]
+       [:action :string]
+       [:graph-uuid :string]
+       [:ops [:sequential to-ws-op-schema]]
+       [:t-before :int]]
+      [:map
+       [:req-id :string]
+       [:action :string]
+       [:s3-key :string]]]]
     ["presign-put-temp-s3-obj"
      [:map
       [:req-id :string]
