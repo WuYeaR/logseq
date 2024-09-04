@@ -32,7 +32,7 @@
             [frontend.components.title :as title]))
 
 (rum/defc property-empty-btn-value
-  [& {:keys [property] :as opts}]
+  [property & opts]
   (let [text (cond
                (= (:db/ident property) :logseq.property/description)
                "Add description"
@@ -40,9 +40,9 @@
                "Empty")]
     (if (= text "Empty")
       (shui/button (merge {:class "empty-btn" :variant :text} opts)
-                  text)
+                   text)
       (shui/button (merge {:class "empty-btn !text-base" :variant :text} opts)
-                  text))))
+                   text))))
 
 (rum/defc property-empty-text-value
   [& {:as opts}]
@@ -56,24 +56,18 @@
      (icon-component/icon-picker icon-value
        {:disabled? config/publishing?
         :initial-open? editing?
+        :del-btn? (some? icon-value)
         :on-chosen (fn [_e icon]
-                     (p/do!
+                     (if icon
                        (db-property-handler/set-block-property!
                          (:db/id block)
                          :logseq.property/icon
                          (select-keys icon [:type :id :color]))
-                       (shui/popup-hide!)
-                       (shui/dialog-close!)))})
-     (when (and icon-value (not config/publishing?))
-       [:a.fade-link.flex {:on-click (fn [_e]
-                                       (p/do!
-                                         (db-property-handler/remove-block-property!
-                                           (:db/id block)
-                                           :logseq.property/icon)
-                                         (shui/popup-hide!)
-                                         (shui/dialog-close!)))
-                           :title "Delete this icon"}
-        (ui/icon "X")])]))
+                       (db-property-handler/remove-block-property!
+                         (:db/id block)
+                         :logseq.property/icon))
+                     (shui/popup-hide!)
+                     (shui/dialog-close!))})]))
 
 (defn- select-type?
   [property type]
@@ -84,32 +78,31 @@
 (defn <create-new-block!
   [block property value & {:keys [edit-block?]
                            :or {edit-block? true}}]
+  (shui/popup-hide!)
+  (shui/dialog-close!)
   (p/let [block
           (if (and (= :default (get-in property [:block/schema :type]))
-                (not (db-property/many? property)))
+                   (not (db-property/many? property)))
             (p/let [existing-value (get block (:db/ident property))
                     existing-value? (and (some? existing-value)
-                                      (not= (:db/ident existing-value) :logseq.property/empty-placeholder))
+                                         (not= (:db/ident existing-value) :logseq.property/empty-placeholder))
                     new-block-id (when-not existing-value? (db/new-block-id))
                     _ (when-not existing-value?
                         (db-property-handler/create-property-text-block!
-                          (:db/id block)
-                          (:db/id property)
-                          value
-                          {:new-block-id new-block-id}))]
+                         (:db/id block)
+                         (:db/id property)
+                         value
+                         {:new-block-id new-block-id}))]
               (if existing-value? existing-value (db/entity [:block/uuid new-block-id])))
             (p/let [new-block-id (db/new-block-id)
                     _ (db-property-handler/create-property-text-block!
-                        (:db/id block)
-                        (:db/id property)
-                        value
-                        {:new-block-id new-block-id})]
+                       (:db/id block)
+                       (:db/id property)
+                       value
+                       {:new-block-id new-block-id})]
               (db/entity [:block/uuid new-block-id])))]
     (when edit-block?
-      (p/do!
-        (editor-handler/edit-block! block :max {:container-id :unknown-container})
-        (shui/popup-hide!)
-        (shui/dialog-close!)))
+      (editor-handler/edit-block! block :max {:container-id :unknown-container}))
     block))
 
 (defn <add-property!
@@ -125,21 +118,21 @@
          checkbox? (= :checkbox (get-in property [:block/schema :type]))]
      (assert (qualified-keyword? property-id) "property to add must be a keyword")
      (p/do!
-       (if (and class? class-schema?)
-         (db-property-handler/class-add-property! (:db/id block) property-id)
-         (if (and (db-property-type/ref-property-types (get-in property [:block/schema :type]))
-               (string? property-value'))
-           (<create-new-block! block (db/entity property-id) property-value' {:edit-block? false})
-           (property-handler/set-block-property! repo (:block/uuid block) property-id property-value')))
-       (when exit-edit?
-         (ui/hide-popups-until-preview-popup!)
-         (shui/dialog-close!))
-       (when-not (or many? checkbox?)
-         (when-let [input (state/get-input)]
-           (.focus input)))
-       (when checkbox?
-         (state/set-editor-action-data! {:type :focus-property-value
-                                         :property property}))))))
+      (if (and class? class-schema?)
+        (db-property-handler/class-add-property! (:db/id block) property-id)
+        (if (and (db-property-type/user-ref-property-types (get-in property [:block/schema :type]))
+                 (string? property-value'))
+          (<create-new-block! block (db/entity property-id) property-value' {:edit-block? false})
+          (property-handler/set-block-property! repo (:block/uuid block) property-id property-value')))
+      (when exit-edit?
+        (ui/hide-popups-until-preview-popup!)
+        (shui/dialog-close!))
+      (when-not (or many? checkbox?)
+        (when-let [input (state/get-input)]
+          (.focus input)))
+      (when checkbox?
+        (state/set-editor-action-data! {:type :focus-property-value
+                                        :property property}))))))
 
 (defn- add-or-remove-property-value
   [block property value selected? {:keys [refresh-result-f]}]
@@ -162,12 +155,13 @@
            state)
    :will-mount (fn [state]
                  (js/setTimeout
-                   #(some-> @(::identity state)
-                      (js/document.getElementById)
-                      (.querySelector "[aria-selected=true]")
-                      (.focus)) 16)
+                  #(some-> @(::identity state)
+                           (js/document.getElementById)
+                           (.querySelector "[aria-selected=true]")
+                           (.focus)) 16)
                  state)
    :will-unmount (fn [state]
+                   (shui/popup-hide!)
                    (shui/dialog-close!)
                    (state/set-editor-action! nil)
                    state)}
@@ -183,22 +177,22 @@
             (let [gd (goog.date.Date. (.getFullYear d) (.getMonth d) (.getDate d))]
               (let [journal (date/js-date->journal-title gd)]
                 (p/do!
-                  (when-not (db/get-case-page journal)
-                    (page-handler/<create! journal {:redirect? false
-                                                    :create-first-block? false}))
-                  (when (fn? on-change)
-                    (on-change (db/get-case-page journal)))
-                  (shui/popup-hide! id)
-                  (ui/hide-popups-until-preview-popup!)
-                  (shui/dialog-close!))))))]
+                 (when-not (db/get-case-page journal)
+                   (page-handler/<create! journal {:redirect? false
+                                                   :create-first-block? false}))
+                 (when (fn? on-change)
+                   (on-change (db/get-case-page journal)))
+                 (shui/popup-hide! id)
+                 (ui/hide-popups-until-preview-popup!)
+                 (shui/dialog-close!))))))]
     (ui/single-calendar
-      (cond->
-        {:initial-focus true
-         :selected initial-day
-         :id @*ident
-         :on-select select-handler!}
-        initial-month
-        (assoc :default-month initial-month)))))
+     (cond->
+      {:initial-focus true
+       :selected initial-day
+       :id @*ident
+       :on-select select-handler!}
+       initial-month
+       (assoc :default-month initial-month)))))
 
 (rum/defc date-picker
   [value {:keys [on-change on-delete del-btn? editing? multiple-values? other-position?]}]
@@ -246,7 +240,7 @@
                         :meta-click? other-position?} page)
               (:db/id page)))
           (when-not multiple-values?
-            (property-empty-btn-value)))))))
+            (property-empty-btn-value nil)))))))
 
 (rum/defc property-value-date-picker
   [block property value opts]
@@ -377,10 +371,11 @@
                              (if (every? de/entity? v)
                                (map :db/id v)
                                [(:db/id v)])))
+        parent-property? (= (:db/ident property) :logseq.property/parent)
         nodes
         (->>
          (cond
-           (= (:db/ident property) :logseq.property/parent)
+           parent-property?
            (let [children-pages (model/get-structured-children repo (:db/id block))
                  ;; Disallows cyclic hierarchies
                  exclude-ids (-> (set (map (fn [id] (:block/uuid (db/entity id))) children-pages))
@@ -443,7 +438,7 @@
                                               "Choose nodes"
                                               :else
                                               "Choose node")
-                 :show-new-when-not-exact-match? true
+                 :show-new-when-not-exact-match? (if parent-property? false true)
                  :extract-chosen-fn :value
                  :extract-fn (fn [x] (or (:label-value x) (:label x)))
                  :input-opts input-opts
@@ -528,7 +523,7 @@
       (let [schema (:block/schema property)
             type (:type schema)
             closed-values? (seq (:property/closed-values property))
-            ref-type? (db-property-type/ref-property-types type)
+            ref-type? (db-property-type/user-ref-property-types type)
             items (if closed-values?
                     (keep (fn [block]
                             (let [icon (pu/get-block-property-value block :logseq.property/icon)
@@ -616,14 +611,14 @@
       [:div
        {:tabIndex 0
         :on-click (fn [] (<create-new-block! block property ""))}
-       (property-empty-btn-value {:property property})])))
+       (property-empty-btn-value property)])))
 
 (rum/defcs property-block-value < rum/reactive db-mixins/query
-                                  {:init (fn [state]
-                                           (let [block (first (:rum/args state))]
-                                             (when-let [block-id (or (:db/id block) (:block/uuid block))]
-                                               (db-async/<get-block (state/get-current-repo) block-id :children? true)))
-                                           state)}
+  {:init (fn [state]
+           (let [block (first (:rum/args state))]
+             (when-let [block-id (or (:db/id block) (:block/uuid block))]
+               (db-async/<get-block (state/get-current-repo) block-id :children? true)))
+           state)}
   [state value block property page-cp]
   (when value
     (if (state/sub-async-query-loading value)
@@ -646,7 +641,7 @@
                 (:db/id v-block))
               :else
               invalid-warning)))
-        (property-empty-btn-value {:property property})))))
+        (property-empty-btn-value property)))))
 
 (rum/defc closed-value-item < rum/reactive db-mixins/query
   [value {:keys [inline-text icon?]}]
@@ -689,7 +684,7 @@
     [:div.select-item.cursor-pointer
      (cond
        (= value :logseq.property/empty-placeholder)
-       (property-empty-btn-value {:property property})
+       (property-empty-btn-value property)
 
        (or (ldb/page? value)
            (and (seq (:block/tags value))
@@ -773,7 +768,7 @@
   (let [schema (:block/schema property)
         multiple-values? (db-property/many? property)
         class (str (when-not row? "flex flex-1 ")
-                (when multiple-values? "property-value-content"))
+                   (when multiple-values? "property-value-content"))
         type (:type schema)]
     [:div.cursor-text
      {:id (or dom-id (random-uuid))
@@ -785,7 +780,7 @@
                     (<create-new-block! block property "")))}
      (cond
        (and (= type :default) (nil? (:block/title value)))
-       [:div.jtrigger (property-empty-btn-value {:property property})]
+       [:div.jtrigger (property-empty-btn-value property)]
 
        (= type :default)
        (property-block-value value block property page-cp)
@@ -951,7 +946,8 @@
                            page-ancestors (when parent?
                                             (let [ancestor-pages (loop [parents [block]]
                                                                    (if-let [parent (:logseq.property/parent (last parents))]
-                                                                     (recur (conj parents parent))
+                                                                     (when-not (contains? (set parents) parent)
+                                                                       (recur (conj parents parent)))
                                                                      parents))]
                                               (->> (reverse ancestor-pages)
                                                    (remove (fn [e] (= (:db/id block) (:db/id e))))

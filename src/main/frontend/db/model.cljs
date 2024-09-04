@@ -788,8 +788,8 @@ independent of format as format specific heading characters are stripped"
           (parent ?parent ?children)]
         (conn/get-db repo)
         eid
-     (:parent rules/rules))
-   distinct))
+        (:parent rules/rules))
+   (remove #{eid})))
 
 (defn get-class-objects
   [repo class-id]

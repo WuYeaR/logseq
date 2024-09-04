@@ -143,7 +143,6 @@
              mods (mod total step)
              rows (if (zero? mods) rows (inc rows))
              items (vec items)]
-         (prn :debug :rows rows)
          (ui/virtualized-list
           (cond-> {:total-count rows
                    :item-content (fn [idx]
@@ -306,7 +305,10 @@
   (rum/local :all ::tab)
   (rum/local nil ::hover)
   {:init (fn [s]
-           (assoc s ::color (atom (storage/get :ls-icon-color-preset))))}
+           (assoc s ::color (atom (storage/get :ls-icon-color-preset))))
+   :will-unmount (fn [state]
+                   (shui/popup-hide!)
+                   state)}
   [state {:keys [on-chosen del-btn?] :as opts}]
   (let [*q (::q state)
         *result (::result state)
@@ -456,7 +458,8 @@
                     (when-not disabled?
                       (shui/popup-show! (.-target e) content-fn
                                         (medley/deep-merge
-                                         {:id :ls-icon-picker
+                                         {:align :start
+                                          :id :ls-icon-picker
                                           :content-props {:class "ls-icon-picker"
                                                           :onEscapeKeyDown #(.preventDefault %)}}
                                          popup-opts))))}

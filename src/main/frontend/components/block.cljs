@@ -1958,12 +1958,15 @@
                                      " hide-inner-bullet")
                                    (when order-list? " as-order-list typed-list"))}
 
-                      (let [icon (get-block-icon block)]
+                      (let [icon (get-block-icon block)
+                            page? (db/page? block)]
                         (cond
                           link?
-                          (ui/icon "link" {:size 14})
+                          (ui/icon "link" {:size 15})
+                          page?
+                          (ui/icon "page" {:size 15})
                           icon
-                          (icon-component/icon icon)
+                          (icon-component/icon icon {:size 16})
                           :else
                           [:span.bullet (cond->
                                          {:blockid (str uuid)}
@@ -2565,8 +2568,9 @@
                  default-hide? (or (not (and current-block-page? (not embed-self?) (state/auto-expand-block-refs?)))
                                    (= (str (:id config)) (str (:block/uuid block))))
                  *refs-count (atom nil)]
-             (p/let [count (db-async/<get-block-refs-count (state/get-current-repo) (:db/id block))]
-               (reset! *refs-count count))
+             (when-let [id (:db/id block)]
+               (p/let [count (db-async/<get-block-refs-count (state/get-current-repo) id)]
+                 (reset! *refs-count count)))
              (assoc state
                     ::hide-block-refs? (atom default-hide?)
                     ::refs-count *refs-count)))}
@@ -2642,7 +2646,7 @@
 
        (when-not (or (:block-ref? config) (:table? config))
          (when (and db-based? (seq (:block/tags block)))
-            (tags (assoc config :block/uuid (:block/uuid block)) block @*hover? edit?)))
+           (tags (assoc config :block/uuid (:block/uuid block)) block @*hover? edit?)))
 
        (when-not (or (:table? config) (:page-title? config))
          (block-refs-count block refs-count *hide-block-refs?))]
@@ -2901,7 +2905,6 @@
 
 (defn- block-mouse-leave
   [e *control-show? block-id doc-mode?]
-  (util/stop e)
   (reset! *control-show? false)
   (when doc-mode?
     (when-let [parent (gdom/getElement block-id)]
@@ -3725,21 +3728,24 @@
         ;; FIXME: parents need to be sorted
         parent-blocks (group-by :block/parent page-blocks)]
     [:div.my-2.references-blocks-item {:key (str "page-" (:db/id page))}
-      (ui/foldable
-       [:div
-        (page-cp config page)
-        (when alias? [:span.text-sm.font-medium.opacity-50 " Alias"])]
-       (for [[parent blocks] parent-blocks]
-         (let [blocks' (map (fn [b]
-                              (if (e/entity? b)
-                                b
-                                (update b :block/children
-                                        (fn [col]
-                                          (tree/non-consecutive-blocks->vec-tree col))))) blocks)]
-           (rum/with-key
-             (breadcrumb-with-container blocks' config)
-             (:db/id parent))))
-       {:debug-id page})]))
+     (let [items (for [[parent blocks] parent-blocks]
+                     (let [blocks' (map (fn [b]
+                                          (if (e/entity? b)
+                                            b
+                                            (update b :block/children
+                                              (fn [col]
+                                                (tree/non-consecutive-blocks->vec-tree col))))) blocks)]
+                       (rum/with-key
+                         (breadcrumb-with-container blocks' config)
+                         (:db/id parent))))]
+       (if page
+         (ui/foldable
+           [:div.with-foldable-page
+            (page-cp config page)
+            (when alias? [:span.text-sm.font-medium.opacity-50 " Alias"])]
+           items
+           {:debug-id page})
+         [:div.only-page-blocks items]))]))
 
 ;; headers to hiccup
 (defn ->hiccup

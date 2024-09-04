@@ -355,7 +355,7 @@
   }
 
   .ui__icon.ti {
-    @apply relative left-[1px] top-[3px];
+    @apply relative top-[3px] left-0;
   }
 }
 
@@ -834,6 +834,18 @@ html.is-mac {
 
   &-item {
     @apply bg-gray-03 rounded p-4;
+
+    > .only-page-blocks {
+      @apply relative -left-[11px];
+    }
+
+    .with-foldable-page {
+      > .preview-ref-link {
+        .page-ref .ui__icon.ti {
+          @apply top-[2px] left-0;
+        }
+      }
+    }
   }
 
   .page-reference:hover {

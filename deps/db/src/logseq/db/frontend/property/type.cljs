@@ -4,8 +4,7 @@
   (:require [datascript.core :as d]
             [clojure.set :as set]
             [logseq.common.util.macro :as macro-util]
-            [clojure.string :as string]
-            [logseq.common.config :as common-config]))
+            [logseq.db.frontend.entity-util :as entity-util]))
 
 ;; Config vars
 ;; ===========
@@ -43,19 +42,24 @@
 (def value-ref-property-types
   "Property value ref types where the refed entities either store their value in
   :property.value/content or :block/title (for :default)"
-  (into #{:default}
-        original-value-ref-property-types))
+  (into #{:default} original-value-ref-property-types))
 
-(def ref-property-types
-  "Ref types. Property values that users see are stored in either
-  :property.value/content, :block/title.
-  :block/title is for all the page related types"
-  (into #{:date :node :entity :class :page :property} value-ref-property-types))
+(def user-ref-property-types
+  "User ref types. Property values that users see are stored in either
+  :property.value/content or :block/title. :block/title is for all the page related types"
+  (into #{:date :node} value-ref-property-types))
 
-(assert (set/subset? ref-property-types
-                     (set/union (set user-built-in-property-types) internal-built-in-property-types))
+(assert (set/subset? user-ref-property-types
+                     (set user-built-in-property-types))
         "All ref types are valid property types")
 
+(def all-ref-property-types
+  "All ref types - user and internal"
+  (into #{:entity :class :page :property} user-ref-property-types))
+
+(assert (set/subset? all-ref-property-types
+                     (set/union (set user-built-in-property-types) internal-built-in-property-types))
+        "All ref types are valid property types")
 
 ;; Property value validation
 ;; =========================
@@ -89,52 +93,17 @@
   [db id]
   (some? (d/entity db id)))
 
-(defn page?
-  [block]
-  (contains? #{"page" "journal" "whiteboard" "class" "property" "hidden"}
-             (:block/type block)))
-
-(defn class?
-  [entity]
-  (= (:block/type entity) "class"))
-
-(defn property?
-  [entity]
-  (= (:block/type entity) "property"))
-
-(defn closed-value?
-  [entity]
-  (= (:block/type entity) "closed value"))
-
-(defn whiteboard?
-  "Given a page entity or map, check if it is a whiteboard page"
-  [page]
-  (= (:block/type page) "whiteboard"))
-
-(defn journal?
-  "Given a page entity or map, check if it is a journal page"
-  [page]
-  (= (:block/type page) "journal"))
-
-(defn hidden?
-  [page]
-  (when page
-    (if (string? page)
-      (or (string/starts-with? page "$$$")
-          (= common-config/favorites-page-name page))
-      (= (:block/type page) "hidden"))))
-
 (defn- class-entity?
   [db id]
-  (class? (d/entity db id)))
+  (entity-util/class? (d/entity db id)))
 
 (defn- property-entity?
   [db id]
-  (property? (d/entity db id)))
+  (entity-util/property? (d/entity db id)))
 
 (defn- page-entity?
   [db id]
-  (page? (d/entity db id)))
+  (entity-util/page? (d/entity db id)))
 
 (defn- number-entity?
   [db id-or-value {:keys [new-closed-value?]}]

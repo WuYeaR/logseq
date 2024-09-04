@@ -104,7 +104,7 @@
         :block/order (db-order/gen-key)}
         (seq classes)
         (assoc :property/schema.classes classes)
-        (or ref-type? (contains? (conj db-property-type/ref-property-types :entity) (:type prop-schema)))
+        (or ref-type? (contains? db-property-type/all-ref-property-types (:type prop-schema)))
         (assoc :db/valueType :db.type/ref))))))
 
 (defn build-new-class
@@ -127,11 +127,3 @@
     :block/uuid (d/squuid)
     :block/format :markdown
     :block/type "page"}))
-
-(def page? db-property-type/page?)
-(def class? db-property-type/class?)
-(def property? db-property-type/property?)
-(def closed-value? db-property-type/closed-value?)
-(def whiteboard? db-property-type/whiteboard?)
-(def journal? db-property-type/journal?)
-(def hidden? db-property-type/hidden?)

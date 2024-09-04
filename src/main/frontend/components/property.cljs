@@ -114,7 +114,9 @@
                    (and *show-class-select? @*show-class-select?)
                    nil
                    add-class-property?
-                   (shui/dialog-close!)
+                   (do
+                     (shui/popup-hide!)
+                     (shui/dialog-close!))
                    (and block (= type :checkbox))
                    (p/do!
                     (ui/hide-popups-until-preview-popup!)
@@ -203,11 +205,13 @@
             add-class-property?
             (p/do!
              (pv/<add-property! block (:db/ident property) "" {:class-schema? class-schema?})
+             (shui/popup-hide!)
              (shui/dialog-close!))
 
             (= :checkbox type)
             (p/do!
              (ui/hide-popups-until-preview-popup!)
+             (shui/popup-hide!)
              (shui/dialog-close!)
              (pv/<add-property! block (:db/ident property) false {:exit-edit? true}))
 
@@ -215,6 +219,7 @@
                  (not (seq (:property/closed-values property))))
             (p/do!
              (pv/<create-new-block! block property "")
+             (shui/popup-hide!)
              (shui/dialog-close!))
 
             (or (not= :default type)
@@ -292,7 +297,8 @@
      (mixins/hide-when-esc-or-outside
       state
       :on-hide (fn [_state _e type]
-                 (when (= type :esc)
+                 (when (contains? #{:esc} type)
+                   (shui/popup-hide!)
                    (shui/popup-hide!)
                    (shui/dialog-close!)
                    (when-let [^js input (state/get-input)]
@@ -331,7 +337,7 @@
                                                  #{:page block-type}
                                                  #{block-type})]
                                (or (and (not page?) (contains? existing-tag-alias (:block/title m)))
-                                   ;; Filters out properties from being in wrong :view-context
+                                   ;; Filters out properties from being in wrong :view-context and :never view-contexts
                                    (and (not= view-context :all) (not (contains? block-types view-context))))))
         property (rum/react *property)
         property-key (rum/react *property-key)]
@@ -443,7 +449,7 @@
                                (:logseq.property/description property))]
            [:div.property-value-container.col-span-3.flex.flex-row.gap-1.items-center
             (cond-> {}
-              class-properties? (assoc :class (if (:logsea.property.class/properties block)
+              class-properties? (assoc :class (if (:logseq.property.class/properties block)
                                                 "ml-2 -mt-1"
                                                 "-ml-1")))
             (when-not (or block? class-properties? property-desc)

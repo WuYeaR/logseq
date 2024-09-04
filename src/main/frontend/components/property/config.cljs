@@ -145,7 +145,7 @@
                [:a.text-sm (str "#" (:block/title class))])
              [:span.opacity-60.pl-1.top-1.relative.hover:opacity-80.active:opacity-60
               (shui/tabler-icon "edit")]]
-            (pv/property-empty-btn-value))])])))
+            (pv/property-empty-btn-value property))])])))
 
 (rum/defc name-edit-pane
   [property {:keys [set-sub-open! disabled?]}]
@@ -397,7 +397,7 @@
                         (shui/popup-show! (.-target e)
                                           (fn [{:keys [id]}]
                                             (let [opts {:toggle-fn (fn [] (shui/popup-hide! id))}
-                                                  values' (->> (if (contains? db-property-type/ref-property-types (get-in property [:block/schema :type]))
+                                                  values' (->> (if (contains? db-property-type/user-ref-property-types (get-in property [:block/schema :type]))
                                                                  (map #(:block/uuid (db/entity %)) values)
                                                                  values)
                                                                (remove string/blank?)
@@ -544,7 +544,7 @@
                                         (update-cardinality-fn))))}))
 
      (shui/dropdown-menu-separator)
-     (when (and (not (contains? #{:logseq.property/parent} (:db/ident property)))
+     (when (and (not (contains? #{:logseq.property/parent :logseq.property.class/properties} (:db/ident property)))
                 (not
                  (and (= :default (get-in property [:block/schema :type]))
                       (empty? (:property/closed-values property))
@@ -554,9 +554,10 @@
                                     :item-props {:class "ui__position-trigger-item"}
                                     :submenu-content (fn [ops] (ui-position-sub-pane property (assoc ops :position position)))})))
 
-     (dropdown-editor-menuitem {:icon :eye-off :title "Hide by default" :toggle-checked? (boolean (:hide? property-schema))
-                                :on-toggle-checked-change #(db-property-handler/upsert-property! (:db/ident property)
-                                                                                                 (assoc property-schema :hide? %) {})})
+     (when (not (contains? #{:logseq.property/parent :logseq.property.class/properties} (:db/ident property)))
+      (dropdown-editor-menuitem {:icon :eye-off :title "Hide by default" :toggle-checked? (boolean (:hide? property-schema))
+                                 :on-toggle-checked-change #(db-property-handler/upsert-property! (:db/ident property)
+                                                                                                  (assoc property-schema :hide? %) {})}))
 
      (when owner-block
        (shui/dropdown-menu-separator))

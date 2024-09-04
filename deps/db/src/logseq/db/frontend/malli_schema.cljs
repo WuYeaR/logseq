@@ -7,7 +7,7 @@
             [datascript.core :as d]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.entity-plus :as entity-plus]
-            [logseq.db.sqlite.util :as sqlite-util]
+            [logseq.db.frontend.entity-util :as entity-util]
             [logseq.db.frontend.order :as db-order]))
 
 ;; :db/ident malli schemas
@@ -242,11 +242,6 @@
     page-attrs
     page-or-block-attrs)))
 
-(def class-attrs
-  [[:db/ident class-ident]
-   [:logseq.property/parent {:optional true} :int]
-   [:logseq.property.class/properties {:optional true} [:set :int]]])
-
 (def class-page
   (vec
    (concat
@@ -254,8 +249,8 @@
      [:block/schema
       {:optional true}
       [:map
-       [:properties {:optional true} [:vector property-ident]]]]]
-    class-attrs
+       [:properties {:optional true} [:vector property-ident]]]]
+     [:db/ident class-ident]]
     page-attrs
     page-or-block-attrs)))
 
@@ -277,7 +272,7 @@
          [:type (apply vector :enum (into db-property-type/internal-built-in-property-types
                                           db-property-type/user-built-in-property-types))]
          [:public? {:optional true} :boolean]
-         [:view-context {:optional true} [:enum :page :block :class]]
+         [:view-context {:optional true} [:enum :page :block :class :never]]
          [:shortcut {:optional true} :string]]
         property-common-schema-attrs))]]
     property-attrs
@@ -426,15 +421,15 @@
   (into
    [:multi {:dispatch (fn [d]
                         (cond
-                          (sqlite-util/property? d)
+                          (entity-util/property? d)
                           :property
-                          (sqlite-util/class? d)
+                          (entity-util/class? d)
                           :class
-                          (sqlite-util/hidden? d)
+                          (entity-util/hidden? d)
                           :hidden
-                          (sqlite-util/whiteboard? d)
+                          (entity-util/whiteboard? d)
                           :normal-page
-                          (sqlite-util/page? d)
+                          (entity-util/page? d)
                           :normal-page
                           (:file/path d)
                           :file-block
@@ -465,7 +460,7 @@
 
 ;; Keep malli schema in sync with db schema
 ;; ========================================
-(let [malli-many-ref-attrs (->> (concat class-attrs property-attrs page-attrs block-attrs page-or-block-attrs (rest closed-value-block*))
+(let [malli-many-ref-attrs (->> (concat property-attrs page-attrs block-attrs page-or-block-attrs (rest closed-value-block*))
                                 (filter #(= (last %) [:set :int]))
                                 (map first)
                                 set)]
@@ -474,7 +469,7 @@
                          (string/join ", " undeclared-ref-attrs))
                     {}))))
 
-(let [malli-one-ref-attrs (->> (concat class-attrs property-attrs page-attrs block-attrs page-or-block-attrs (rest normal-page))
+(let [malli-one-ref-attrs (->> (concat property-attrs page-attrs block-attrs page-or-block-attrs (rest normal-page))
                                (filter #(= (last %) :int))
                                (map first)
                                set)
@@ -484,7 +479,7 @@
                          (string/join ", " undeclared-ref-attrs))
                     {}))))
 
-(let [malli-non-ref-attrs (->> (concat class-attrs property-attrs page-attrs block-attrs page-or-block-attrs (rest normal-page))
+(let [malli-non-ref-attrs (->> (concat property-attrs page-attrs block-attrs page-or-block-attrs (rest normal-page))
                                (concat (rest file-block) (rest asset-block) (rest property-value-block)
                                        (rest db-ident-key-val) (rest class-page))
                                (remove #(= (last %) [:set :int]))

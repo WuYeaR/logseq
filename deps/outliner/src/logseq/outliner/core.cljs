@@ -133,41 +133,41 @@
 
 (comment
   (defn- create-linked-page-when-save
-   [repo conn db date-formatter txs-state block-entity m tags-has-class?]
-   (if tags-has-class?
-     (let [content (state/get-edit-content)
-           linked-page (some-> content #(gp-block/extract-plain repo %))
-           sanity-linked-page (some-> linked-page util/page-name-sanity-lc)
-           linking-page? (and (not (string/blank? sanity-linked-page))
-                              @(:editor/create-page? @state/state))]
-       (when linking-page?
-         (let [existing-ref-id (some (fn [r]
-                                       (when (= sanity-linked-page (:block/name r))
-                                         (:block/uuid r)))
-                                     (:block/refs m))
-               page-m (gp-block/page-name->map linked-page (or existing-ref-id true)
-                                               db true date-formatter)
-               _ (when-not (d/entity db [:block/uuid (:block/uuid page-m)])
-                   (ldb/transact! conn [page-m]))
-               merge-tx (let [children (:block/_parent block-entity)
-                              page (d/entity db [:block/uuid (:block/uuid page-m)])
-                              [target sibling?] (get-last-child-or-self db page)]
-                          (when (seq children)
-                            (:tx-data
-                             (move-blocks repo conn children target
-                                          {:sibling? sibling?
-                                           :outliner-op :move-blocks}))))]
-           (swap! txs-state (fn [txs]
-                              (concat txs
-                                      [(assoc page-m
-                                              :block/tags (:block/tags m)
-                                              :block/format :markdown)
-                                       {:db/id (:db/id block-entity)
-                                        :block/title ""
-                                        :block/refs []
-                                        :block/link [:block/uuid (:block/uuid page-m)]}]
-                                      merge-tx))))))
-     (reset! (:editor/create-page? @state/state) false))))
+    [repo conn db date-formatter txs-state block-entity m tags-has-class?]
+    (if tags-has-class?
+      (let [content (state/get-edit-content)
+            linked-page (some-> content #(gp-block/extract-plain repo %))
+            sanity-linked-page (some-> linked-page util/page-name-sanity-lc)
+            linking-page? (and (not (string/blank? sanity-linked-page))
+                               @(:editor/create-page? @state/state))]
+        (when linking-page?
+          (let [existing-ref-id (some (fn [r]
+                                        (when (= sanity-linked-page (:block/name r))
+                                          (:block/uuid r)))
+                                      (:block/refs m))
+                page-m (gp-block/page-name->map linked-page (or existing-ref-id true)
+                                                db true date-formatter)
+                _ (when-not (d/entity db [:block/uuid (:block/uuid page-m)])
+                    (ldb/transact! conn [page-m]))
+                merge-tx (let [children (:block/_parent block-entity)
+                               page (d/entity db [:block/uuid (:block/uuid page-m)])
+                               [target sibling?] (get-last-child-or-self db page)]
+                           (when (seq children)
+                             (:tx-data
+                              (move-blocks repo conn children target
+                                           {:sibling? sibling?
+                                            :outliner-op :move-blocks}))))]
+            (swap! txs-state (fn [txs]
+                               (concat txs
+                                       [(assoc page-m
+                                               :block/tags (:block/tags m)
+                                               :block/format :markdown)
+                                        {:db/id (:db/id block-entity)
+                                         :block/title ""
+                                         :block/refs []
+                                         :block/link [:block/uuid (:block/uuid page-m)]}]
+                                       merge-tx))))))
+      (reset! (:editor/create-page? @state/state) false))))
 
 (defn- file-rebuild-block-refs
   [repo db date-formatter {:block/keys [properties] :as block}]
@@ -232,21 +232,17 @@
          (map (fn [tag]
                 [:db/retract (:db/id block) :block/tags (:db/id tag)])))))
 
-(defn ^:api validate-unique-by-name-tag-and-block-type
-  "Validates uniqueness of blocks and pages for the following cases:
-   - Page names are unique by tag e.g. their can be Apple #Company and Apple #Fruit
-   - Page names are unique when they have no tag
-   - Block names are unique by tag"
+(defn- validate-unique-for-page
   [db new-title {:block/keys [tags] :as entity}]
-  (cond
-    (and (ldb/page? entity) (seq tags))
+  (if (seq tags)
     (when-let [res (seq (d/q '[:find [?b ...]
-                               :in $ ?title [?tag-id ...]
+                               :in $ ?eid ?title [?tag-id ...]
                                :where
                                [?b :block/title ?title]
                                [?b :block/tags ?tag-id]
-                               [?b :block/type "page"]]
+                               [(not= ?b ?eid)]]
                              db
+                             (:db/id entity)
                              new-title
                              (map :db/id tags)))]
       (throw (ex-info "Duplicate page by tag"
@@ -254,28 +250,41 @@
                        :payload {:message (str "Another page named " (pr-str new-title) " already exists for tag "
                                                (pr-str (->> res first (d/entity db) :block/tags first :block/title)))
                                  :type :warning}})))
-
-    (ldb/page? entity)
     (when-let [_res (seq (d/q '[:find [?b ...]
-                                :in $ ?title
+                                :in $ ?eid ?type ?title
                                 :where
                                 [?b :block/title ?title]
-                                [?b :block/type "page"]]
+                                [?b :block/type ?type]
+                                [(not= ?b ?eid)]]
                               db
+                              (:db/id entity)
+                              (:block/type entity)
                               new-title))]
       (throw (ex-info "Duplicate page without tag"
                       {:type :notification
                        :payload {:message (str "Another page named " (pr-str new-title) " already exists")
-                                 :type :warning}})))
+                                 :type :warning}})))))
+
+(defn ^:api validate-unique-by-name-tag-and-block-type
+  "Validates uniqueness of blocks and pages for the following cases:
+   - Page names are unique by tag e.g. their can be Apple #Company and Apple #Fruit
+   - Page names are unique by type e.g. their can be #Journal and Journal (normal page)
+   - Block names are unique by tag"
+  [db new-title {:block/keys [tags] :as entity}]
+  (cond
+    (ldb/page? entity)
+    (validate-unique-for-page db new-title entity)
 
     (and (not (:block/type entity)) (seq tags))
     (when-let [res (seq (d/q '[:find [?b ...]
-                               :in $ ?title [?tag-id ...]
+                               :in $ ?eid ?title [?tag-id ...]
                                :where
                                [?b :block/title ?title]
                                [?b :block/tags ?tag-id]
+                               [(not= ?b ?eid)]
                                [(missing? $ ?b :block/type)]]
                              db
+                             (:db/id entity)
                              new-title
                              (map :db/id tags)))]
       (throw (ex-info "Duplicate block by tag"
@@ -575,8 +584,8 @@
                      (cond
                        (or (map? lookup) (vector? lookup) (de/entity? lookup))
                        (when-let [uuid' (if (and (vector? lookup) (= (first lookup) :block/uuid))
-                                         (get uuids (last lookup))
-                                         (get id->new-uuid (:db/id lookup)))]
+                                          (get uuids (last lookup))
+                                          (get id->new-uuid (:db/id lookup)))]
                          [:block/uuid uuid'])
 
                        (integer? lookup)
@@ -1010,7 +1019,7 @@
 (defn move-blocks!
   [repo conn blocks target-block sibling?]
   (op-transact! move-blocks repo conn blocks target-block {:sibling? sibling?
-                                                             :outliner-op :move-blocks}))
+                                                           :outliner-op :move-blocks}))
 (defn move-blocks-up-down!
   [repo conn blocks up?]
   (op-transact! move-blocks-up-down repo conn blocks up?))

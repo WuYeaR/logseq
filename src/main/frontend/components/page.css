@@ -75,6 +75,10 @@
 
   &.title {
     @apply mb-3;
+
+    .block-main-container {
+      @apply gap-2;
+    }
   }
 
   .edit-input {
@@ -202,7 +206,7 @@ html.is-native-ios {
 }
 
 .references {
-  user-select: none;
+  @apply select-none;
 }
 
 .no-ring {

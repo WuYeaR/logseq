@@ -600,14 +600,14 @@
                      ref))
                  refs)))
         (:block/title block)
-        (update :block/title
-                db-content/page-ref->special-id-ref
-                ;; TODO: Handle refs for whiteboard block which has none
-                (->> (:block/refs block)
-                     (remove #(or (ref-to-ignore? %)
+        (assoc :block/title
+               ;; TODO: Handle refs for whiteboard block which has none
+               (let [refs (->> (:block/refs block)
+                               (remove #(or (ref-to-ignore? %)
                                   ;; ignore deadline related refs that don't affect content
-                                  (and (keyword? %) (db-malli-schema/internal-ident? %))))
-                     (map #(add-uuid-to-page-map % page-names-to-uuids)))))
+                                            (and (keyword? %) (db-malli-schema/internal-ident? %))))
+                               (map #(add-uuid-to-page-map % page-names-to-uuids)))]
+                 (db-content/refs->special-id-ref (:block/title block) refs {:replace-tag? false}))))
       block)))
 
 (defn- fix-pre-block-references
