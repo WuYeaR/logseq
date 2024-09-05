@@ -1,6 +1,7 @@
 (ns ^:no-doc logseq.api
   (:require [cljs-bean.core :as bean]
             [cljs.reader]
+            [goog.object :as gobj]
             [datascript.core :as d]
             [frontend.db.conn :as conn]
             [logseq.common.util :as common-util]
@@ -32,7 +33,6 @@
             [frontend.handler.plugin :as plugin-handler]
             [frontend.handler.common.plugin :as plugin-common-handler]
             [frontend.handler.property :as property-handler]
-            [frontend.handler.db-based.property.util :as db-pu]
             [frontend.handler.db-based.property :as db-property-handler]
             [logseq.outliner.core :as outliner-core]
             [frontend.modules.outliner.tree :as outliner-tree]
@@ -75,6 +75,17 @@
   []
   (some-> (state/get-current-repo)
     (config/db-based-graph?)))
+
+(defn get-caller-plugin-id
+  [] (gobj/get js/window "$$callerPluginID"))
+
+(defn- sanitize-user-property-name
+  [k]
+  (if (string? k)
+    (-> k (string/trim)
+      (string/replace #"^\:+" "")
+      (string/lower-case))
+    k))
 
 ;; helpers
 (defn ^:export install-plugin-hook
@@ -857,17 +868,26 @@
 ;; properties (db only)
 (defn ^:export get_property
   [k]
-  (when-let [k' (and (string? k) (keyword k))]
+  (when-let [k' (and (string? k) (some-> k (sanitize-user-property-name) (keyword)))]
     (p/let [k (if (qualified-keyword? k') k' (get-db-ident-for-property-name k))
             p (db-utils/pull k)]
       (bean/->js (sdk-utils/normalize-keyword-for-json p)))))
 
 (defn ^:export upsert_property
+  "schema:
+    {:type :default | :keyword | :map | :date | :checkbox
+     :cardinality :many | :one
+     :hide? true
+     :view-context :page
+     :public? false}
+  "
   [k ^js schema ^js opts]
   (when-let [k' (and (string? k) (keyword k))]
     (p/let [k (if (qualified-keyword? k') k'
-                  (get-db-ident-for-property-name k))
-            schema (or (and schema (bean/->clj schema)) {})
+                (get-db-ident-for-property-name k))
+            schema (or (some-> schema (bean/->clj)
+                         (update-keys #(if (contains? #{:hide :public} %)
+                                         (keyword (str (name %) "?")) %))) {})
             schema (cond-> schema
                      (string? (:cardinality schema))
                      (update :cardinality keyword)
@@ -892,7 +912,8 @@
 
 (def ^:export remove_block_property
   (fn [block-uuid key]
-    (p/let [block-uuid (sdk-utils/uuid-or-throw-error block-uuid)
+    (p/let [key (sanitize-user-property-name key)
+            block-uuid (sdk-utils/uuid-or-throw-error block-uuid)
             _ (db-async/<get-block (state/get-current-repo) block-uuid :children? false)
             db? (config/db-based-graph? (state/get-current-repo))
             key-ns? (and (keyword? key) (namespace key))
@@ -908,12 +929,15 @@
             _ (db-async/<get-block (state/get-current-repo) block-uuid :children? false)]
       (when-let [block (db-model/get-block-by-uuid block-uuid)]
         (let [properties (:block/properties block)
+              key (sanitize-user-property-name key)
               property-name (-> (if (keyword? key) (name key) key) (util/safe-lower-case))
               property-value (or (get properties key)
                                  (get properties property-name)
                                  (get properties (get-db-ident-for-property-name property-name)))
-              property-value (if-let [property-id (:db/id property-value)] (db/pull property-id) property-value)]
-          (bean/->js (sdk-utils/normalize-keyword-for-json property-value)))))))
+              property-value (if-let [property-id (:db/id property-value)]
+                               (db/pull property-id) property-value)
+              ret (sdk-utils/normalize-keyword-for-json property-value)]
+          (bean/->js ret))))))
 
 (def ^:export get_block_properties
   (fn [block-uuid]
@@ -921,7 +945,7 @@
             _ (db-async/<get-block (state/get-current-repo) block-uuid :children? false)]
       (when-let [block (db-model/get-block-by-uuid block-uuid)]
         (let [properties (if (config/db-based-graph? (state/get-current-repo))
-                           (db-pu/readable-properties (:block/properties block))
+                           (api-block/into-readable-db-properties (:block/properties block))
                            (:block/properties block))]
           (bean/->js (sdk-utils/normalize-keyword-for-json properties)))))))
 

@@ -118,6 +118,8 @@
                                                false
                                                true)
       :ui/scrolling?                         (atom false)
+      :ui/show-empty-and-hidden-properties?  (atom {:mode :global
+                                                    :show? false})
       :document/mode?                        document-mode?
 
       :config                                {}
@@ -1368,7 +1370,8 @@ Similar to re-frame subscriptions"
   (clear-cursor-range!)
   (set-state! :editor/content {})
   (set-state! :ui/select-query-cache {})
-  (set-state! :editor/block-refs #{}))
+  (set-state! :editor/block-refs #{})
+  (set-state! :editor/action-data nil))
 
 (defn into-code-editor-mode!
   []

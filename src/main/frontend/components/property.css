@@ -60,6 +60,11 @@
     }
 
     .property-k {
+        .jtrigger {
+            &-id {
+                @apply left-[16px];
+            }
+        }
       @apply inline-block overflow-hidden text-ellipsis whitespace-nowrap;
     }
 
@@ -68,6 +73,14 @@
 
       .jtrigger-id {
         @apply left-[-34px] top-[2px];
+      }
+
+      .property-k {
+          .jtrigger {
+              &-id {
+                  @apply left-[16px];
+              }
+          }
       }
 
       &-inner[data-type=checkbox] {

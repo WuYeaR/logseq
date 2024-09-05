@@ -26,6 +26,7 @@
             [frontend.handler.property.util :as pu]
             [logseq.db.frontend.property.type :as db-property-type]
             [dommy.core :as d]
+            [goog.dom :as gdom]
             [frontend.search :as search]
             [goog.functions :refer [debounce]]
             [frontend.handler.route :as route-handler]
@@ -51,13 +52,8 @@
 
 (rum/defc icon-row
   [block editing?]
-  (let [icon-value (:logseq.property/icon block)]
-    [:div.col-span-3.flex.flex-row.items-center.gap-2
-     (icon-component/icon-picker icon-value
-       {:disabled? config/publishing?
-        :initial-open? editing?
-        :del-btn? (some? icon-value)
-        :on-chosen (fn [_e icon]
+  (let [icon-value (:logseq.property/icon block)
+        on-chosen! (fn [_e icon]
                      (if icon
                        (db-property-handler/set-block-property!
                          (:db/id block)
@@ -69,7 +65,30 @@
                      ;; close icon picker & select
                      (shui/popup-hide-all!)
                      ;; close page property select modal
-                     (shui/dialog-close!))})]))
+                     (shui/dialog-close!))]
+
+    (rum/use-effect!
+      (fn []
+        (when editing?
+          (shui/popup-hide-all!)
+          (let [^js container (or (some-> js/document.activeElement (.closest ".page"))
+                                (gdom/getElement "main-content-container"))
+                icon (get block (pu/get-pid :logseq.property/icon))]
+            (util/schedule
+              (fn []
+                (when-let [^js target (some-> (.querySelector container (str "#ls-block-" (str (:block/uuid block))))
+                                        (.querySelector ".block-main-container"))]
+                  (shui/popup-show! target
+                    #(icon-component/icon-search {:on-chosen on-chosen! :del-btn? (some? icon)})
+                    {:id :ls-icon-picker
+                     :align :start})))))))
+      [editing?])
+
+    [:div.col-span-3.flex.flex-row.items-center.gap-2
+     (icon-component/icon-picker icon-value
+       {:disabled? config/publishing?
+        :del-btn? (some? icon-value)
+        :on-chosen on-chosen!})]))
 
 (defn- select-type?
   [property type]
@@ -374,12 +393,12 @@
                                (map :db/id v)
                                [(:db/id v)])))
         parent-property? (= (:db/ident property) :logseq.property/parent)
+        children-pages (when parent-property? (model/get-structured-children repo (:db/id block)))
         nodes
         (->>
          (cond
            parent-property?
-           (let [children-pages (model/get-structured-children repo (:db/id block))
-                 ;; Disallows cyclic hierarchies
+           (let [;; Disallows cyclic hierarchies
                  exclude-ids (-> (set (map (fn [id] (:block/uuid (db/entity id))) children-pages))
                                  (conj (:block/uuid block))) ; break cycle
                  options (if (ldb/class? block) (model/get-all-classes repo)
@@ -397,17 +416,23 @@
             classes)
 
            :else
-           (if (empty? result)
-             (let [v (get block (:db/ident property))]
-               (remove #(= :logseq.property/empty-placeholder (:db/ident %))
-                       (if (every? de/entity? v) v [v])))
-             (remove (fn [node]
-                       (or (= (:db/id block) (:db/id node))
-                            ;; A page's alias can't be itself
-                           (and alias? (= (or (:db/id (:block/page block))
-                                              (:db/id block))
-                                          (:db/id node)))))
-                     result))))
+           (let [property-type (get-in property [:block/schema :type])]
+             (if (empty? result)
+               (let [v (get block (:db/ident property))]
+                 (remove #(= :logseq.property/empty-placeholder (:db/ident %))
+                         (if (every? de/entity? v) v [v])))
+               (remove (fn [node]
+                         (or (= (:db/id block) (:db/id node))
+                             ;; A page's alias can't be itself
+                             (and alias? (= (or (:db/id (:block/page block))
+                                                (:db/id block))
+                                            (:db/id node)))
+                             (when (and property-type (not= property-type :node))
+                               (if (= property-type :page)
+                                 (not (db/page? node))
+                                 (not= property-type (some-> (:block/type node) keyword))))))
+                       result)))))
+
         options (map (fn [node]
                        (let [id (or (:value node) (:db/id node))
                              label (if (integer? id)
@@ -440,7 +465,9 @@
                                               "Choose nodes"
                                               :else
                                               "Choose node")
-                 :show-new-when-not-exact-match? (if parent-property? false true)
+                 :show-new-when-not-exact-match? (if (and parent-property? (contains? (set children-pages) (:db/id block)))
+                                                   false
+                                                   true)
                  :extract-chosen-fn :value
                  :extract-fn (fn [x] (or (:label-value x) (:label x)))
                  :input-opts input-opts
@@ -491,7 +518,6 @@
                           "Escape"
                           (when-let [f (:on-chosen opts)] (f))
                           nil))})
-
         opts' (assoc opts
                      :block block
                      :input-opts input-opts

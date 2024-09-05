@@ -768,6 +768,13 @@
 (declare block-reference)
 (declare block-reference-preview)
 
+(rum/defc invalid-node-ref
+  [id]
+  (let [db-based? (config/db-based-graph? (state/get-current-repo))
+        ->ref (if db-based? page-ref/->page-ref block-ref/->block-ref)]
+    [:span.warning.mr-1 {:title "Node ref invalid"}
+   (->ref id)]))
+
 (rum/defcs page-cp < db-mixins/query rum/reactive
   {:init (fn [state]
            (let [page (last (:rum/args state))]
@@ -785,26 +792,34 @@
   "Component for a page. `page` argument contains :block/name which can be (un)sanitized page name.
    Keys for `config`:
    - `:preview?`: Is this component under preview mode? (If true, `page-preview-trigger` won't be registered to this `page-cp`)"
-  [state {:keys [label children preview? disable-preview?] :as config} _page]
+  [state {:keys [label children preview? disable-preview?] :as config} page]
   (let [entity (::entity state)]
-    (when-let [entity (when entity (db/sub-block (:db/id entity)))]
-      (if (or (ldb/page? entity) (:block/tags entity))
-        (let [page-name (some-> (:block/title entity) util/page-name-sanity-lc)
-              whiteboard-page? (model/whiteboard-page? entity)
-              inner (page-inner (assoc config :whiteboard-page? whiteboard-page?) entity children label)
-              modal? (shui-dialog/has-modal?)]
-          (if (and (not (util/mobile?))
-                   (not= page-name (:id config))
-                   (not (false? preview?))
-                   (not disable-preview?)
-                   (not modal?))
-            (if (ldb/page? entity)
-              (page-preview-trigger (assoc config :children inner) entity)
-              (block-reference-preview inner {:repo (state/get-current-repo)
-                                              :config config
-                                              :id (:block/uuid entity)}))
-            inner))
-        (block-reference config (:block/uuid entity) nil)))))
+    (let [entity (when entity (db/sub-block (:db/id entity)))]
+      (cond
+        entity
+        (if (or (ldb/page? entity) (:block/tags entity))
+          (let [page-name (some-> (:block/title entity) util/page-name-sanity-lc)
+                whiteboard-page? (model/whiteboard-page? entity)
+                inner (page-inner (assoc config :whiteboard-page? whiteboard-page?) entity children label)
+                modal? (shui-dialog/has-modal?)]
+            (if (and (not (util/mobile?))
+                     (not= page-name (:id config))
+                     (not (false? preview?))
+                     (not disable-preview?)
+                     (not modal?))
+              (if (ldb/page? entity)
+                (page-preview-trigger (assoc config :children inner) entity)
+                (block-reference-preview inner {:repo (state/get-current-repo)
+                                                :config config
+                                                :id (:block/uuid entity)}))
+              inner))
+          (block-reference config (:block/uuid entity) nil))
+
+        (and (:block/name page) (util/uuid-string? (:block/name page)))
+        (invalid-node-ref (:block/name page))
+
+        :else
+        nil))))
 
 (rum/defc asset-reference
   [config title path]
@@ -1083,11 +1098,8 @@
                  (block-reference-preview inner
                                           {:repo repo :config config :id block-id})
                  inner)])
-            [:span.warning.mr-1 {:title "Block ref invalid"}
-             (block-ref/->block-ref id)])))
-
-      [:span.warning.mr-1 {:title "Block ref invalid"}
-       (block-ref/->block-ref id)])))
+            (invalid-node-ref id))))
+      (invalid-node-ref id))))
 
 (defn inline-text
   ([format v]
@@ -2387,15 +2399,14 @@
                    (str uuid "-" idx)))))]))))
 
 (rum/defc tags
-  "Tags without inline tags"
-  [config block hover? edit?]
+  "Tags without inline or hidden tags"
+  [config block]
   (when (:block/raw-title block)
-    (let [tags' (->>
-                 (:block/tags block)
-                 (remove (fn [t] (ldb/inline-tag? (:block/raw-title block) t))))
-          block-tags (if (and (not hover?) (not edit?) (= [:logseq.class/Task] (map :db/ident tags')))
-                       (remove (fn [t] (= (:db/ident t) :logseq.class/Task)) tags')
-                       tags')]
+    (let [block-tags (->>
+                      (:block/tags block)
+                      (remove (fn [t]
+                                (or (ldb/inline-tag? (:block/raw-title block) t)
+                                    (:logseq.property.class/hide-from-node t)))))]
       (when (seq block-tags)
         [:div.block-tags
          (for [tag block-tags]
@@ -2422,12 +2433,12 @@
           (for [pid properties]
             (let [property (db/entity pid)
                   v (get block pid)]
-              [:div.flex.flex-row.items-center.gap-1.px-1.hover:bg-secondary.rounded
+              [:div.flex.flex-row.items-center.gap-2.px-1.hover:bg-secondary.rounded
                [:div.flex.flex-row.opacity-50.hover:opacity-100
                 (property-component/property-key-cp block property opts)
                 [:div.select-none ":"]]
                (pv/property-value block property v opts)]))]
-         [:div.positioned-properties.right-align.flex.flex-row.gap-1.select-none
+         [:div.positioned-properties.right-align.flex.flex-row.gap-2.select-none.h-6
           (for [pid properties]
             (when-let [property (db/entity pid)]
               (pv/property-value block property (get block pid) (assoc opts :show-tooltip? true))))]))))
@@ -2575,8 +2586,7 @@
                     ::hide-block-refs? (atom default-hide?)
                     ::refs-count *refs-count)))}
   [state config {:block/keys [uuid format] :as block} {:keys [edit-input-id block-id edit? hide-block-refs-count?]}]
-  (let [*hover? (::hover? state)
-        *hide-block-refs? (get state ::hide-block-refs?)
+  (let [*hide-block-refs? (get state ::hide-block-refs?)
         *refs-count (get state ::refs-count)
         hide-block-refs? (rum/react *hide-block-refs?)
         editor-box (state/get-component :editor/box)
@@ -2594,9 +2604,7 @@
                      (rum/react *refs-count))
         table? (:table? config)]
     [:div.block-content-or-editor-wrap
-     {:class (when (:page-title? config) "ls-page-title-container")
-      :on-mouse-over #(reset! *hover? true)
-      :on-mouse-leave #(reset! *hover? false)}
+     {:class (when (:page-title? config) "ls-page-title-container")}
      (when (and db-based? (not table?)) (block-positioned-properties config block :block-left))
      [:div.flex.flex-1.flex-col
       [:div.flex.flex-1.flex-row.gap-1.items-center
@@ -2646,7 +2654,7 @@
 
        (when-not (or (:block-ref? config) (:table? config))
          (when (and db-based? (seq (:block/tags block)))
-           (tags (assoc config :block/uuid (:block/uuid block)) block @*hover? edit?)))
+           (tags (assoc config :block/uuid (:block/uuid block)) block)))
 
        (when-not (or (:table? config) (:page-title? config))
          (block-refs-count block refs-count *hide-block-refs?))]
@@ -3109,12 +3117,13 @@
         (let [icon' (get block (pu/get-pid :logseq.property/icon))]
           (when-let [icon (and (ldb/page? block)
                                (or icon'
-                                   (or (when (ldb/class? block)
+                                   (some :logseq.property/icon (:block/tags block))
+                                   (when (ldb/class? block)
                                          {:type :tabler-icon
                                           :id "hash"})
-                                       (when (ldb/property? block)
+                                   (when (ldb/property? block)
                                          {:type :tabler-icon
-                                          :id "letter-p"}))))]
+                                          :id "letter-p"})))]
             [:div.ls-page-icon.flex.self-start
              (icon-component/icon-picker icon
                                          {:on-chosen (fn [_e icon]

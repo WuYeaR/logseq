@@ -28,13 +28,13 @@
   (ordered-map
    :block/alias           {:title "Alias"
                            :attribute :block/alias
-                           :schema {:type :node
+                           :schema {:type :page
                                     :cardinality :many
                                     :view-context :page
                                     :public? true}}
    :block/tags           {:title "Tags"
                           :attribute :block/tags
-                          :schema {:type :node
+                          :schema {:type :class
                                    :cardinality :many
                                    :public? true
                                    :classes #{:logseq.class/Root}}}
@@ -47,6 +47,10 @@
                                                :cardinality :many
                                                :public? true
                                                :view-context :never}}
+   :logseq.property.class/hide-from-node {:title "Hide from node"
+                                          :schema {:type :checkbox
+                                                   :public? true
+                                                   :view-context :class}}
    :logseq.property/page-tags {:title "pageTags"
                                :schema {:type :page
                                         :public? true
@@ -318,8 +322,9 @@
 (defn create-user-property-ident-from-name
   "Creates a property :db/ident for a default user namespace.
    NOTE: Only use this when creating a db-ident for a new property."
-  [property-name]
-  (db-ident/create-db-ident-from-name default-user-namespace property-name))
+  ([property-name] (create-user-property-ident-from-name property-name default-user-namespace))
+  ([property-name user-namespace]
+   (db-ident/create-db-ident-from-name user-namespace property-name)))
 
 (defn get-class-ordered-properties
   [class-entity]
