@@ -343,6 +343,7 @@
       ;; advanced
       [["Query"
         [[:editor/input "{{query }}" {:backward-pos 2}]
+         [:editor/set-property :block/tags (:db/id (db/entity :logseq.class/Query))]
          [:editor/exit]]
         query-doc
         :icon/query
@@ -682,6 +683,11 @@
     (db-based-set-status status)
     (file-based-set-status status format)))
 
+(defmethod handle-step :editor/set-property [[_ property-id value]]
+  (when (config/db-based-graph? (state/get-current-repo))
+    (when-let [block (state/get-edit-block)]
+      (db-property-handler/set-block-property! (:db/id block) property-id value))))
+
 (defn- file-based-set-priority
   [priority]
   (when-let [input-id (state/get-edit-input-id)]
@@ -839,8 +845,8 @@
   (prn "No handler for step: " type))
 
 (defn handle-steps
-  [vector format]
-  (doseq [step vector]
+  [vector' format]
+  (doseq [step vector']
     (handle-step step format)))
 
 (defn exec-plugin-simple-command!

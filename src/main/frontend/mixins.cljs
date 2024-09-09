@@ -58,13 +58,13 @@
         nil))))
 
 (defn on-enter
-  [state & {:keys [on-enter node]}]
+  [state & {on-enter-fn :on-enter :keys [node]}]
   (let [node (or node (rum/dom-node state))]
     (listen state node "keyup"
             (fn [e]
               (case (.-keyCode e)
                 ;; Enter
-                13 (on-enter e)
+                13 (on-enter-fn e)
                 nil)))))
 
 (defn on-key-up
@@ -143,7 +143,7 @@
   "Notice: the first parameter needs to be a `config` with `id`, optional `sidebar?`, `whiteboard?`"
   {:init (fn [state]
            (let [config (first (:rum/args state))
-                 key (select-keys config [:id :sidebar? :whiteboard? :embed? :custom-query? :query :current-block])
+                 key (select-keys config [:id :sidebar? :whiteboard? :embed? :custom-query? :query :current-block :table?])
                  container-id (or (:container-id config) (state/get-container-id key))]
              (assoc state :container-id container-id)))})
 

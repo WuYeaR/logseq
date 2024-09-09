@@ -257,7 +257,6 @@
           (when-let [page-cp (state/get-component :block/page-cp)]
             (rum/with-key
               (page-cp {:disable-preview? true
-                        :hide-close-button? true
                         :meta-click? other-position?} page)
               (:db/id page)))
           (when-not multiple-values?
@@ -334,7 +333,8 @@
         items' (->>
                 (if (and (seq selected-choices)
                          (not multiple-choices?)
-                         (not (and (ldb/class? block) (= (:db/ident property) :logseq.property/parent))))
+                         (not (and (ldb/class? block) (= (:db/ident property) :logseq.property/parent)))
+                         (not= (:db/ident property) :logseq.property.view/type))
                   (concat items
                           [{:value clear-value
                             :label clear-value-label
@@ -529,6 +529,13 @@
                                      (reset! *result result)))))]
     (select-node property opts' *result)))
 
+(defn- get-closed-value-content
+  [block property]
+  (let [value (db-property/closed-value-content block)]
+    (if (= :logseq.property.view/type (:db/ident property))
+      (str (string/capitalize value) " View")
+      value)))
+
 (rum/defcs select < rum/reactive db-mixins/query
                     {:init (fn [state]
                              (let [*values (atom :loading)
@@ -555,7 +562,7 @@
             items (if closed-values?
                     (keep (fn [block]
                             (let [icon (pu/get-block-property-value block :logseq.property/icon)
-                                  value (db-property/closed-value-content block)]
+                                  value (get-closed-value-content block property)]
                               {:label (if icon
                                         [:div.flex.flex-row.gap-1.items-center
                                          (icon-component/icon icon)
@@ -664,7 +671,6 @@
               (ldb/page? v-block)
               (rum/with-key
                 (page-cp {:disable-preview? true
-                          :hide-close-button? true
                           :tag? class?} v-block)
                 (:db/id v-block))
               :else
@@ -672,12 +678,12 @@
         (property-empty-btn-value property)))))
 
 (rum/defc closed-value-item < rum/reactive db-mixins/query
-  [value {:keys [inline-text icon?]}]
+  [property value {:keys [inline-text icon?]}]
   (when value
     (let [eid (if (de/entity? value) (:db/id value) [:block/uuid value])]
       (when-let [block (db/sub-block (:db/id (db/entity eid)))]
         (let [property-block? (db-property/property-created-block? block)
-              value' (db-property/closed-value-content block)
+              value' (get-closed-value-content block property)
               icon (pu/get-block-property-value block :logseq.property/icon)]
           (cond
             icon
@@ -723,7 +729,6 @@
          (rum/with-key
            (page-cp {:disable-preview? true
                      :tag? tag?
-                     :hide-close-button? true
                      :meta-click? other-position?} value)
            (:db/id value)))
 
@@ -732,7 +737,7 @@
          (reference {} (:block/uuid value)))
 
        closed-values?
-       (closed-value-item value opts)
+       (closed-value-item property value opts)
 
        (de/entity? value)
        (when-some [content (if (some? (:property.value/content value))
@@ -749,10 +754,10 @@
   (let [*el (rum/use-ref nil)]
     ;; Open popover initially when editing a property
     (rum/use-effect!
-      (fn []
-        (when (:editing? opts)
-          (.click (rum/deref *el))))
-      [(:editing? opts)])
+     (fn []
+       (when (:editing? opts)
+         (.click (rum/deref *el))))
+     [(:editing? opts)])
     (let [schema (:block/schema property)
           type (get schema :type :default)
           select-opts' (assoc select-opts :multiple-choices? false)
@@ -768,27 +773,27 @@
           show! (fn [e]
                   (let [target (.-target e)]
                     (when-not (or config/publishing?
-                                (util/shift-key? e)
-                                (util/meta-key? e)
-                                (util/link? target)
-                                (when-let [node (.closest target "a")]
-                                  (not (or (d/has-class? node "page-ref")
-                                         (d/has-class? node "tag")))))
+                                  (util/shift-key? e)
+                                  (util/meta-key? e)
+                                  (util/link? target)
+                                  (when-let [node (.closest target "a")]
+                                    (not (or (d/has-class? node "page-ref")
+                                             (d/has-class? node "tag")))))
 
                       (shui/popup-show! target popup-content
-                        {:align "start"
-                         :as-dropdown? true
-                         :auto-focus? true
-                         :trigger-id trigger-id}))))]
+                                        {:align "start"
+                                         :as-dropdown? true
+                                         :auto-focus? true
+                                         :trigger-id trigger-id}))))]
       (shui/trigger-as
-        (if (:other-position? opts) :div :div.jtrigger.flex.flex-1.w-full)
-        {:ref *el
-         :id trigger-id
-         :tabIndex 0
-         :on-click show!}
-        (if (string/blank? value)
-          (property-empty-text-value)
-          (value-f))))))
+       (if (:other-position? opts) :div :div.jtrigger.flex.flex-1.w-full)
+       {:ref *el
+        :id trigger-id
+        :tabIndex 0
+        :on-click show!}
+       (if (string/blank? value)
+         (property-empty-text-value)
+         (value-f))))))
 
 (defn- property-value-inner
   [block property value {:keys [inline-text page-cp
@@ -824,8 +829,8 @@
         schema (:block/schema property)
         type (get schema :type :default)
         editing? (or editing?
-                   (and (state/sub-editing? [container-id (:block/uuid block)])
-                     (= (:db/id property) (:db/id (:property (state/get-editor-action-data))))))
+                     (and (state/sub-editing? [container-id (:block/uuid block)])
+                          (= (:db/id property) (:db/id (:property (state/get-editor-action-data))))))
         select-type?' (select-type? property type)
         closed-values? (seq (:property/closed-values property))
         select-opts {:on-chosen on-chosen}
@@ -835,11 +840,15 @@
     (if (= :logseq.property/icon (:db/ident property))
       (icon-row block editing?)
       (if (and select-type?'
-            (not (and (not closed-values?) (= type :date))))
-        (single-value-select block property value
-          (fn [] (select-item property type value opts))
-          select-opts
-          (assoc opts :editing? editing?))
+               (not (and (not closed-values?) (= type :date))))
+        (let [value (if (and (nil? value) (= :logseq.property.view/type (:db/ident property)))
+                      ;; TODO: remove this hack once default value is supported
+                      (db/entity :logseq.property.view/type.table)
+                      value)]
+          (single-value-select block property value
+                               (fn [] (select-item property type value opts))
+                               select-opts
+                               (assoc opts :editing? editing?)))
         (case type
           :date
           (property-value-date-picker block property value (merge opts {:editing? editing?}))

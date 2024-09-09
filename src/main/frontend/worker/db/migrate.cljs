@@ -228,7 +228,9 @@
    [15 {:properties [:logseq.property.class/properties]
         :fix deprecate-class-schema-properties}]
    [16 {:properties [:logseq.property.class/hide-from-node]}]
-   [17 {:fix update-db-attrs-type}]])
+   [17 {:fix update-db-attrs-type}]
+   [18 {:properties [:logseq.property.view/type]}]
+   [19 {:classes [:logseq.class/Query]}]])
 
 (let [max-schema-version (apply max (map first schema-version->updates))]
   (assert (<= db-schema/version max-schema-version))
@@ -276,8 +278,8 @@
                              (#(sqlite-create-graph/build-initial-classes* % {}))
                              (map (fn [b] (assoc b :logseq.property/built-in? true))))
             fixes (mapcat
-                   (fn [update]
-                     (when-let [fix (:fix update)]
+                   (fn [update']
+                     (when-let [fix (:fix update')]
                        (when (fn? fix)
                          (fix conn search-db)))) updates)
             tx-data' (if db-based? (concat new-properties new-classes fixes) fixes)]
