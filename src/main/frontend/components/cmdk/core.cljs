@@ -16,6 +16,7 @@
    [frontend.handler.whiteboard :as whiteboard-handler]
    [frontend.handler.notification :as notification]
    [frontend.modules.shortcut.core :as shortcut]
+   [frontend.handler.db-based.page :as db-page-handler]
    [frontend.search :as search]
    [frontend.state :as state]
    [frontend.ui :as ui]
@@ -246,7 +247,7 @@
     {:icon icon
      :icon-theme :gray
      :text (highlight-content-query text @!input)
-     :header (when-not (ldb/object? block) (block/breadcrumb {:search? true} repo id {}))
+     :header (when-not (db/page? block) (block/breadcrumb {:search? true} repo id {}))
      :current-page? (when-let [page-id (:block/page block)]
                       (= page-id (:block/uuid current-page)))
      :source-block block}))
@@ -491,9 +492,9 @@
     (p/do!
       (cond
         create-class?
-        (page-handler/<create-class! class
-                                     {:redirect? false
-                                      :create-first-block? false})
+        (db-page-handler/<create-class! class
+                                        {:redirect? false
+                                         :create-first-block? false})
         create-whiteboard? (whiteboard-handler/<create-new-whiteboard-and-redirect! @!input)
         create-page? (page-handler/<create! @!input {:redirect? true}))
       (state/close-modal!)

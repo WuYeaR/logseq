@@ -4,6 +4,7 @@
             [frontend.config :as config]
             [frontend.context.i18n :refer [t]]
             [frontend.db :as db]
+            [logseq.db :as ldb]
             [frontend.handler.export.text :as export-text]
             [frontend.handler.export.html :as export-html]
             [frontend.handler.export.opml :as export-opml]
@@ -13,7 +14,60 @@
             [frontend.state :as state]
             [frontend.ui :as ui]
             [frontend.util :as util]
-            [rum.core :as rum]))
+            [rum.core :as rum]
+            [logseq.shui.ui :as shui]
+            [promesa.core :as p]
+            [frontend.idb :as idb]
+            [frontend.handler.notification :as notification]))
+
+(rum/defcs auto-backup < rum/reactive
+  {:init (fn [state]
+           (assoc state ::folder (atom (ldb/get-key-value (db/get-db) :logseq.kv/graph-backup-folder))))}
+  [state]
+  (let [*backup-folder (::folder state)
+        backup-folder (rum/react *backup-folder)
+        repo (state/get-current-repo)]
+    [:div.flex.flex-col.gap-4
+     [:div.font-medium.opacity-50
+      "Schedule backup"]
+     (if backup-folder
+       [:div.flex.flex-row.items-center.gap-1.text-sm
+        [:div.opacity-50 (str "Backup folder:")]
+        backup-folder
+        (shui/button
+         {:variant :ghost
+          :class "!px-1 !py-1"
+          :title "Change backup folder"
+          :on-click (fn []
+                      (p/do!
+                        (db/transact! [[:db/retractEntity :logseq.kv/graph-backup-folder]])
+                        (reset! *backup-folder nil)))
+          :size :sm}
+         (ui/icon "edit"))]
+       (shui/button
+        {:variant :default
+         :on-click (fn []
+                     (p/let [result (utils/openDirectory #js {:mode "readwrite"})
+                             handle (first result)
+                             folder-name (.-name handle)]
+                       (idb/set-item!
+                        (str "handle/" (js/btoa repo) "/" folder-name) handle)
+                       (db/transact! [(ldb/kv :logseq.kv/graph-backup-folder folder-name)])
+                       (reset! *backup-folder folder-name)))}
+        "Set backup folder first"))
+     [:div.opacity-50.text-sm
+      "Backup will be created every hour."]
+
+     (when backup-folder
+       (shui/button
+        {:variant :default
+         :on-click (fn []
+                     (p/let [result (export/backup-db-graph repo)]
+                       (when result
+                         (notification/show! "Backup successful!" :success))
+                       (export/auto-db-backup! repo {:backup-now? false})))}
+        "Backup now"))]))
+
 
 (rum/defc export
   []
@@ -40,6 +94,7 @@
            [:a.font-medium {:on-click #(export/export-repo-as-debug-json! current-repo)}
             "Export debug JSON"]
            [:p.text-sm.opacity-70 "Any sensitive data will be removed in the exported json file, you can send it to us for debugging."]])
+
         (when-not db-based?
           (when (util/electron?)
             [:div
@@ -56,7 +111,12 @@
         (when-not (or (mobile-util/native-platform?) db-based?)
           [:div
            [:a.font-medium {:on-click #(export/export-repo-as-roam-json! current-repo)}
-            (t :export-roam-json)]])]
+            (t :export-roam-json)]])
+
+        (when (and db-based? util/web-platform? (utils/nfsSupported))
+          [:div
+           [:hr]
+           (auto-backup)])]
 
        [:a#download-as-edn-v2.hidden]
        [:a#download-as-json-v2.hidden]

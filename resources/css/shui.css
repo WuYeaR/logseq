@@ -365,18 +365,18 @@ div[data-radix-popper-content-wrapper] {
 
       button[name=previous-month] {
         @apply relative;
+        svg {
+          width: 14px;
+          height: 14px;
+        }
       }
 
       button[name=next-month] {
         @apply relative;
-      }
-    }
-
-    .months-years-nav {
-      @apply flex items-center relative left-0 pr-0 py-[1px] font-[500] -left-1;
-
-      input {
-        @apply border-none pl-1.5 ml-0 mr-2 bg-transparent;
+        svg {
+            width: 14px;
+            height: 14px;
+        }
       }
     }
   }
@@ -388,8 +388,8 @@ div[data-radix-popper-content-wrapper] {
   }
 
   .del-date-btn {
-    @apply absolute right-[9px] top-[19px] px-1 opacity-70 hover:opacity-100
-    active:opacity-80 hover:text-red-rx-09 rounded-md;
+    @apply absolute right-[13px] top-[21px] px-1 opacity-70 hover:opacity-100
+    active:opacity-80 hover:text-red-rx-09 rounded-md !h-6 !w-6;
   }
 
   &.has-del-btn {
@@ -402,6 +402,12 @@ div[data-radix-popper-content-wrapper] {
 
   input[type=number] {
     appearance: initial;
+  }
+
+  .rdp-button {
+    &[name=previous-month], &[name=next-month] {
+      @apply !h-6 !w-6;
+    }
   }
 }
 

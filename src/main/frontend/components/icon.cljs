@@ -22,18 +22,24 @@
 
 (defn icon
   [icon' & [opts]]
-  (cond
-    (and (= :emoji (:type icon')) (:id icon'))
-    [:em-emoji (merge {:id (:id icon')
-                       :style {:line-height 1}}
-                      opts)]
+  (let [icon' (if (or (string? icon') (keyword? icon'))
+                {:type :tabler-icon :id (name icon')} icon')
+        item (cond
+               (and (= :emoji (:type icon')) (:id icon'))
+               [:em-emoji (merge {:id (:id icon')
+                                  :style {:line-height 1}}
+                            opts)]
 
-    (and (= :tabler-icon (:type icon')) (:id icon'))
-    (ui/icon (:id icon') opts)))
+               (and (= :tabler-icon (:type icon')) (:id icon'))
+               (ui/icon (:id icon') opts))]
+    (if (:color? opts)
+      [:span.flex.items-center.ls-icon-color-wrap
+       {:style {:color (or (some-> icon' :color) "inherit")}} item]
+      item)))
 
 (defn get-node-icon
-  [node-entity opts]
-  (let [first-tag-icon (some :logseq.property/icon (:block/tags node-entity))
+  [node-entity]
+  (let [first-tag-icon (some :logseq.property/icon (sort-by :db/id (:block/tags node-entity)))
         default-icon-id (cond
                           (some? first-tag-icon)
                           first-tag-icon
@@ -46,16 +52,18 @@
                           (ldb/page? node-entity)
                           "page"
                           :else
-                          "letter-n")
-        opts' (assoc opts :size 14)
-        default-icon (ui/icon default-icon-id opts')
-        node-icon (get node-entity (pu/get-pid :logseq.property/icon))]
-    (or
-     (when-not (string/blank? node-icon)
-       [:span.flex (merge {:style {:color (or (:color node-icon) "inherit")}}
-                          (select-keys opts [:class]))
-        (icon node-icon opts')])
-     default-icon)))
+                          "letter-n")]
+    (or (get node-entity (pu/get-pid :logseq.property/icon))
+        default-icon-id)))
+
+(defn get-node-icon-cp
+  [node-entity opts]
+  (let [opts' (assoc opts :size 14)
+        node-icon (get-node-icon node-entity)]
+    (when-not (string/blank? node-icon)
+      [:span.flex (merge {:style {:color (or (:color node-icon) "inherit")}}
+                         (select-keys opts [:class]))
+       (icon node-icon opts')])))
 
 (defn- search-emojis
   [q]
@@ -68,11 +76,11 @@
   (if @*tabler-icons
     @*tabler-icons
     (let [result (->> (keys (bean/->clj js/tablerIcons))
-                      (map (fn [k]
-                             (-> (string/replace (csk/->Camel_Snake_Case (name k)) "_" " ")
-                                 (string/replace-first "Icon " ""))))
-                      ;; FIXME: somehow those icons don't work
-                      (remove #{"Ab" "Ab 2" "Ab Off"}))]
+                   (map (fn [k]
+                          (-> (string/replace (csk/->Camel_Snake_Case (name k)) "_" " ")
+                            (string/replace-first "Icon " ""))))
+                   ;; FIXME: somehow those icons don't work
+                   (remove #{"Ab" "Ab 2" "Ab Off"}))]
       (reset! *tabler-icons result)
       result)))
 
@@ -451,7 +459,7 @@
      [initial-open?])
 
     ;; trigger
-    (let [has-icon? (not (nil? icon-value))]
+    (let [has-icon? (some? icon-value)]
       (shui/button
        {:ref *trigger-ref
         :variant (if has-icon? :ghost :text)
@@ -466,7 +474,8 @@
                                           :content-props {:class "ls-icon-picker"
                                                           :onEscapeKeyDown #(.preventDefault %)}}
                                          popup-opts))))}
-       (if has-icon?
-         [:span {:style {:color (or (:color icon-value) "inherit")}}
-          (icon icon-value icon-props)]
+        (if has-icon?
+         (if (vector? icon-value)       ; hiccup
+           icon-value
+           (icon icon-value (merge {:color? true} icon-props)))
          (or empty-label "Empty"))))))

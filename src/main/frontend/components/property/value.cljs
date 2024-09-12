@@ -11,6 +11,7 @@
             [frontend.handler.page :as page-handler]
             [frontend.handler.property :as property-handler]
             [frontend.handler.db-based.property :as db-property-handler]
+            [frontend.handler.db-based.page :as db-page-handler]
             [frontend.state :as state]
             [frontend.ui :as ui]
             [logseq.shui.ui :as shui]
@@ -186,7 +187,7 @@
                    (shui/dialog-close!)
                    (state/set-editor-action! nil)
                    state)}
-  [state id {:keys [on-change value _del-btn? _on-delete]}]
+  [state id {:keys [on-change value del-btn? on-delete]}]
   (let [*ident (::identity state)
         initial-day (or (some-> value (.getTime) (js/Date.)) (js/Date.))
         initial-month (when value
@@ -206,12 +207,14 @@
                  (shui/popup-hide! id)
                  (ui/hide-popups-until-preview-popup!)
                  (shui/dialog-close!))))))]
-    (ui/single-calendar
+    (ui/nlp-calendar
      (cond->
       {:initial-focus true
        :selected initial-day
        :id @*ident
-       :on-select select-handler!}
+       :del-btn? del-btn?
+       :on-delete on-delete
+       :on-day-click select-handler!}
        initial-month
        (assoc :default-month initial-month)))))
 
@@ -259,8 +262,7 @@
               (page-cp {:disable-preview? true
                         :meta-click? other-position?} page)
               (:db/id page)))
-          (when-not multiple-values?
-            (property-empty-btn-value nil)))))))
+          (property-empty-btn-value nil))))))
 
 (rum/defc property-value-date-picker
   [block property value opts]
@@ -273,7 +275,7 @@
                       (property-handler/set-block-property! repo (:block/uuid block)
                         (:db/ident property)
                         (:db/id page)))
-         :del-btn? true
+         :del-btn? (some-> value (:block/title) (boolean))
          :on-delete (fn []
                       (property-handler/set-block-property! repo (:block/uuid block)
                         (:db/ident property) nil)
@@ -310,12 +312,12 @@
                                     ;; one of and not all these classes
                                     (mapv :block/uuid (take 1 classes)))}]
         (p/let [page (if class?
-                       (page-handler/<create-class! page create-options)
+                       (db-page-handler/<create-class! page create-options)
                        (page-handler/<create! page create-options))]
           (:db/id page)))
 
       (and class? page? id)
-      (p/let [_ (page-handler/convert-to-tag! page-entity)]
+      (p/let [_ (db-page-handler/convert-to-tag! page-entity)]
         id)
 
       :else
@@ -439,10 +441,15 @@
                                      (let [title (subs (title/block-unique-title node) 0 256)
                                            node (or (db/entity id) node)
                                            icon (get-node-icon node)]
-                                       [:div.flex.flex-row.items-center.gap-1
-                                        (when-not (:property/schema.classes property)
-                                          (ui/icon icon {:size 14}))
-                                        [:div title]])
+                                       [:div.flex.flex-col
+                                        (when-not (db/page? node)
+                                          (when-let [breadcrumb (state/get-component :block/breadcrumb)]
+                                            [:div.text-xs.opacity-70.mb-1 {:style {:margin-left 3}}
+                                             (breadcrumb {:search? true} (state/get-current-repo) (:block/uuid block) {})]))
+                                        [:div.flex.flex-row.items-center.gap-1
+                                         (when-not (:property/schema.classes property)
+                                           (ui/icon icon {:size 14}))
+                                         [:div title]]])
                                      (or (:label node) (:block/title node)))]
                          (assoc node
                                 :label-value (:block/title node)
@@ -529,13 +536,6 @@
                                      (reset! *result result)))))]
     (select-node property opts' *result)))
 
-(defn- get-closed-value-content
-  [block property]
-  (let [value (db-property/closed-value-content block)]
-    (if (= :logseq.property.view/type (:db/ident property))
-      (str (string/capitalize value) " View")
-      value)))
-
 (rum/defcs select < rum/reactive db-mixins/query
                     {:init (fn [state]
                              (let [*values (atom :loading)
@@ -562,10 +562,10 @@
             items (if closed-values?
                     (keep (fn [block]
                             (let [icon (pu/get-block-property-value block :logseq.property/icon)
-                                  value (get-closed-value-content block property)]
+                                  value (db-property/closed-value-content block)]
                               {:label (if icon
                                         [:div.flex.flex-row.gap-1.items-center
-                                         (icon-component/icon icon)
+                                         (icon-component/icon icon {:color? true})
                                          value]
                                         value)
                                :value (:db/id block)
@@ -678,19 +678,19 @@
         (property-empty-btn-value property)))))
 
 (rum/defc closed-value-item < rum/reactive db-mixins/query
-  [property value {:keys [inline-text icon?]}]
+  [value {:keys [inline-text icon?]}]
   (when value
     (let [eid (if (de/entity? value) (:db/id value) [:block/uuid value])]
       (when-let [block (db/sub-block (:db/id (db/entity eid)))]
         (let [property-block? (db-property/property-created-block? block)
-              value' (get-closed-value-content block property)
+              value' (db-property/closed-value-content block)
               icon (pu/get-block-property-value block :logseq.property/icon)]
           (cond
             icon
             (if icon?
-              (icon-component/icon icon)
+              (icon-component/icon icon {:color? true})
               [:div.flex.flex-row.items-center.gap-2.h-6
-               (icon-component/icon icon)
+               (icon-component/icon icon {:color? true})
                (when value'
                  [:span value'])])
 
@@ -726,10 +726,10 @@
                 ;; support this case and maybe other complex cases.
                 (not (string/includes? (:block/title value) "[["))))
        (when value
-         (rum/with-key
-           (page-cp {:disable-preview? true
-                     :tag? tag?
-                     :meta-click? other-position?} value)
+          (rum/with-key
+            (page-cp {:disable-preview? true
+                      :tag? tag?
+                      :meta-click? other-position?} value)
            (:db/id value)))
 
        (contains? #{:node :class :property :page} type)
@@ -737,7 +737,7 @@
          (reference {} (:block/uuid value)))
 
        closed-values?
-       (closed-value-item property value opts)
+       (closed-value-item value opts)
 
        (de/entity? value)
        (when-some [content (if (some? (:property.value/content value))
@@ -975,10 +975,10 @@
 
                      :else
                      (let [value-cp (property-scalar-value block property v
-                                                           (merge
-                                                            opts
-                                                            {:editor-id editor-id
-                                                             :dom-id dom-id}))
+                                      (merge
+                                        opts
+                                        {:editor-id editor-id
+                                         :dom-id dom-id}))
                            parent? (= (:db/ident property) :logseq.property/parent)
                            page-ancestors (when parent?
                                             (let [ancestor-pages (loop [parents [block]]

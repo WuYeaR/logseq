@@ -36,7 +36,8 @@
             [medley.core :as medley]
             [promesa.core :as p]
             [rum.core :as rum]
-            [logseq.shui.ui :as shui]))
+            [logseq.shui.ui :as shui]
+            [frontend.date :as date]))
 
 (declare icon)
 
@@ -1130,7 +1131,7 @@
 (rum/defc DelDateButton
   [on-delete]
   (shui/button {:variant :outline :size :sm :class "del-date-btn" :on-click on-delete}
-    (shui/tabler-icon "trash")))
+    (shui/tabler-icon "trash" {:size 15})))
 
 (defonce month-values
   [:January :February :March :April :May
@@ -1142,55 +1143,73 @@
   (some->> n (nth month-values)
     (name)))
 
-(rum/defc DateMonthsPicker
-  [value on-select]
-  [:div.ls-months-picker
-   (for [[idx m] (medley/indexed month-values)
-         :let [m' (cljs.core/name m)]]
-     (shui/button {:on-click (fn []
-                               (let [^js e (js/Event. "change")]
-                                 (js/Object.defineProperty e "target"
-                                   #js {:value #js {:value idx} :enumerable true})
-                                 (on-select e)
-                                 (shui/popup-hide!)))
-                   :variant :secondary
-                   :class (when (= idx value) "current")}
-       m'))])
-
-(rum/defc DateNavSelect
+(rum/defc date-year-month-select
   [{:keys [name value onChange _children]}]
   [:div.months-years-nav
    (if (= name "years")
-     [:label [:input.py-0.px-1.w-auto
-              {:type "number" :value value :on-change onChange :min 1 :max 9999}]]
+     (shui/input
+      {:on-change (fn [v] (when v (onChange v)))
+       :class "h-6 ml-2 !w-auto !px-2"
+       :value value
+       :type "number"
+       :min 1
+       :max 9999})
 
-     ;; months
-     ;[:select {:on-change onChange :value value :data-month value} children]
-     [:span.cursor-pointer.pr-1.pl-2.active:opacity-80.select-none
-      {:on-click (fn [^js e]
-                   (shui/popup-show! (.-target e)
-                     (fn []
-                       (DateMonthsPicker value onChange))
-                     {:align "start"
-                      :content-props {:class "w-[220px]"
-                                      :onOpenAutoFocus #(.preventDefault %)}}))}
-      (get-month-label value)])])
+     (shui/dropdown-menu
+      (shui/dropdown-menu-trigger
+       {:as-child true}
+       (shui/button {:variant :ghost
+                     :class "!px-2 !py-0 h-6 border border-input rounded-md"
+                     :size :sm}
+         (get-month-label value)))
+      (shui/dropdown-menu-content
+        (for [[idx month] (medley/indexed month-values)
+              :let [label (clojure.core/name month)]]
+          (shui/dropdown-menu-checkbox-item
+            {:checked (= value idx)
+             :on-select (fn []
+                          (let [^js e (js/Event. "change")]
+                            (js/Object.defineProperty e "target"
+                              #js {:value #js {:value idx} :enumerable true})
+                            (onChange e)))}
+            label)))))])
 
 (defn single-calendar
-  [{:keys [del-btn? on-delete on-select] :as opts}]
+  [{:keys [del-btn? on-delete on-select on-day-click] :as opts}]
   (shui/calendar
     (merge
       {:mode "single"
        :caption-layout "dropdown-buttons"
-       :fromYear 1899
-       :toYear 2099
-       :components (cond-> {:Dropdown #(DateNavSelect (bean/bean %))}
-                     del-btn? (assoc :Head #(DelDateButton on-delete)))
-       :class-names {:months "" :root (when del-btn? "has-del-btn")}
-       :on-day-key-down (fn [^js d _ ^js e]
-                          (when (= "Enter" (.-key e))
-                            (on-select d)))}
-      opts)))
+     :fromYear 1899
+     :toYear 2099
+     :components (cond-> {:Dropdown #(date-year-month-select (bean/bean %))}
+                   del-btn? (assoc :Head #(DelDateButton on-delete)))
+     :class-names {:months "" :root (when del-btn? "has-del-btn")}
+     :on-day-key-down (fn [^js d _ ^js e]
+                        (when (= "Enter" (.-key e))
+                          (let [on-select' (or on-select on-day-click)]
+                            (on-select' d))))}
+    opts)))
+
+(defn nlp-calendar
+  [opts]
+  [:div.flex.flex-col.gap-2
+   (single-calendar opts)
+   (shui/input
+    {:type "text"
+     :placeholder "e.g. Next week"
+     :class "mx-3 mb-3"
+     :style {:width "initial"
+             :tab-index -1}
+     :auto-complete (if (util/chrome?) "chrome-off" "off")
+     :on-key-down (fn [e]
+                    (when (= "Enter" (util/ekey e))
+                      (let [value (util/evalue e)]
+                        (when-not (string/blank? value)
+                          (when-let [result (date/nld-parse value)]
+                            (when-let [date (doto (goog.date.DateTime.) (.setTime (.getTime result)))]
+                              (let [on-select' (or (:on-select opts) (:on-day-click opts))]
+                                (on-select' date))))))))})])
 
 (comment
   (rum/defc emoji-picker

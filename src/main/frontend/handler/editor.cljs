@@ -40,9 +40,9 @@
             [frontend.state :as state]
             [frontend.template :as template]
             [frontend.util :as util]
-            [frontend.util.clock :as clock]
+            [frontend.util.file-based.clock :as clock]
             [frontend.util.cursor :as cursor]
-            [frontend.util.drawer :as drawer]
+            [frontend.util.file-based.drawer :as drawer]
             [frontend.util.keycode :as keycode]
             [frontend.util.list :as list]
             [frontend.util.text :as text-util]
@@ -3118,13 +3118,15 @@
 
 (defn shortcut-cut-selection
   [e]
-  (util/stop e)
-  (cut-blocks-and-clear-selections! true))
+  (when-not (util/input? (.-target e))
+    (util/stop e)
+    (cut-blocks-and-clear-selections! true)))
 
 (defn shortcut-delete-selection
   [e]
-  (util/stop e)
-  (cut-blocks-and-clear-selections! false))
+  (when-not (util/input? (.-target e))
+    (util/stop e)
+    (cut-blocks-and-clear-selections! false)))
 
 (defn- copy-current-block-ref
   [format]
@@ -3391,8 +3393,9 @@
 (defn collapsable?
   ([block-id]
    (collapsable? block-id {}))
-  ([block-id {:keys [semantic?]
-              :or {semantic? false}}]
+  ([block-id {:keys [semantic? ignore-children?]
+              :or {semantic? false
+                   ignore-children? false}}]
    (when block-id
      (let [repo (state/get-current-repo)]
        (if-let [block (db/entity [:block/uuid block-id])]
@@ -3401,7 +3404,7 @@
                property-keys (->> (keys (:block/properties block))
                                   (remove db-property/db-attribute-properties)
                                   (remove #(outliner-property/property-with-other-position? (db/entity %))))]
-           (or (db-model/has-children? block-id)
+           (or (if ignore-children? false (db-model/has-children? block-id))
                (valid-dsl-query-block? block repo)
                (valid-custom-query-block? block)
                (and db-based?

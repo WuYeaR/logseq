@@ -17,13 +17,14 @@
          "frontend.handler.db-based."
          "frontend.worker.handler.page.db-based"
          "frontend.components.property" "frontend.components.class"
-         "frontend.components.db-based" "frontend.components.objects"]))
+         "frontend.components.db-based" "frontend.components.objects" "frontend.components.query.view"]))
 
 (def file-graph-ns
   "Namespaces or parent namespaces _only_ for file graphs"
   (mapv escape-shell-regex
         ["frontend.handler.file-based" "frontend.handler.file-sync"
          "frontend.db.file-based"
+         "frontend.util.file-based"
          "frontend.worker.handler.page.file-based"
          ;; Want to only specify this ns and not the ones under it but don't have a way yet
          "frontend.worker.file"
@@ -41,12 +42,13 @@
    "src/main/frontend/components/property"
    "src/main/frontend/components/objects.cljs"
    "src/main/frontend/components/db_based"
+   "src/main/frontend/components/query/view.cljs"
    "src/electron/electron/db.cljs"])
 
 (def file-graph-paths
   "Paths _only_ for file graphs"
   ["src/main/frontend/handler/file_based" "src/main/frontend/handler/file_sync.cljs" "src/main/frontend/db/file_based"
-   "src/main/frontend/worker/handler/page/file_based" "src/main/frontend/worker/file.cljs"
+   "src/main/frontend/util/file_based" "src/main/frontend/worker/handler/page/file_based" "src/main/frontend/worker/file.cljs"
    "src/main/frontend/fs"
    "src/main/frontend/components/file_sync.cljs"
    "src/main/frontend/components/file_based"

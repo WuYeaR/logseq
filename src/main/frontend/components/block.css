@@ -183,8 +183,8 @@
   border-left: 0;
 }
 
-.block-control-wrap {
-  @apply h-[24px] mt-[1px];
+.block-control-wrap, .ls-page-title .property-value .block-control-wrap {
+  @apply h-[24px];
 
   &.is-order-list {
     @apply mr-0 pr-0;
@@ -199,6 +199,10 @@
   }
 }
 
+.ls-page-title .block-control-wrap {
+  height: initial;
+}
+
 .block-title-wrap {
   @apply inline;
 
@@ -211,7 +215,7 @@
   }
 
   &.as-heading {
-    @apply flex flex-1 items-center;
+    @apply flex flex-1 items-center flex-wrap;
 
     > .ui__checkbox {
       @apply top-0;
@@ -290,15 +294,13 @@
 }
 
 .block-ref {
-  border-bottom: 0.5px solid;
-  border-bottom-color: var(--ls-block-ref-link-text-color);
-  cursor: alias;
-  padding: 2px 0;
+  @apply border-b-[0.5px] border-b-[--ls-block-ref-link-text-color] cursor-alias;
+
   display: inherit;
+  margin-bottom: -1px;
 
   .block-ref {
-    padding: 6px 5px;
-    border: none;
+    @apply mx-1;
   }
 
   &:hover {
@@ -868,14 +870,13 @@ html.is-mac {
   opacity: 1;
 }
 
-.positioned-properties.right-align  {
+.positioned-properties.block-right  {
   button {
-    white-space: nowrap;
+    @apply whitespace-nowrap mr-0.5;
   }
+
   .block-title-wrap {
-    @apply overflow-hidden h-6;
-    white-space: nowrap;
-    text-overflow: ellipsis;
+    @apply overflow-hidden h-6 whitespace-nowrap text-ellipsis;
   }
 }
 
@@ -917,8 +918,8 @@ html.is-mac {
 }
 
 .ls-page-title .positioned-properties svg {
-    width: 24px;
-    height: 24px;
+    width: 16px;
+    height: 16px;
 }
 
 .ls-page-title .ls-page-icon button {
@@ -927,5 +928,8 @@ html.is-mac {
 
 .ls-page-title .positioned-properties {
     height: 54px;
-    overflow: hidden;
+}
+
+.ls-page-title .block-tags {
+  @apply relative -right-1 min-h-full;
 }
