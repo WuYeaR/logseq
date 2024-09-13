@@ -639,8 +639,18 @@
                         :else
                         (util/trim-safe page-name))
                 _ (when-not page-entity (js/console.warn "page-inner's page-entity is nil, given page-name: " page-name))
-                s (if (re-find db-content/special-id-ref-pattern s)
+                s (cond
+                    (not (string? s))
+                    (do
+                      (prn :debug :unknown-title-error :title s
+                           :data (db/pull (:db/id page-entity)))
+                      (db/transact! [{:db/id (:db/id page-entity)
+                                      :block/title "FIX unknown page"
+                                      :block/name "fix unknown page"}])
+                      "Unknown title")
+                    (re-find db-content/special-id-ref-pattern s)
                     (db-content/special-id-ref->page s (:block/refs page-entity))
+                    :else
                     s)
                 s (if tag? (str "#" s) s)]
             (if (ldb/page? page-entity)
@@ -2003,6 +2013,7 @@
   (ui/checkbox
    {:style {:margin-right 6}
     :value checked?
+    :checked checked?
     :on-change (fn [event]
                  (let [target (.-target event)
                        block (:block config)
@@ -2251,6 +2262,7 @@
    (dom/has-class? target "forbid-edit")
    (dom/has-class? target "bullet")
    (dom/has-class? target "logbook")
+   (dom/has-class? target "markdown-table")
    (util/link? target)
    (util/time? target)
    (util/input? target)
@@ -2662,7 +2674,7 @@
     [:div.block-content-or-editor-wrap
      {:class (when (:page-title? config) "ls-page-title-container")}
      (when (and db-based? (not table?)) (block-positioned-properties config block :block-left))
-     [:div.flex.flex-1.flex-col
+     [:div.block-content-or-editor-inner
       [:div.flex.flex-1.flex-row.gap-1.items-center
        (if (and edit? editor-box)
          [:div.editor-wrapper.flex.flex-1
@@ -3399,7 +3411,7 @@
                          :tbody
                          (mapv #(tr :td %) group)))
                  groups)]
-    [:div.table-wrapper
+    [:div.table-wrapper.classic-table.force-visible-scrollbar.markdown-table
      (->elem
        :table
        {:class "table-auto"
