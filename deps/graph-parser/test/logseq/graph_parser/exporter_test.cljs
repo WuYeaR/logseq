@@ -285,9 +285,9 @@
       (is (= #{"gpt"}
              (:block/alias (readable-properties @conn (find-page-by-name @conn "chat-gpt")))))
 
-      (is (= {:logseq.property/query-sort-by :user.property/prop-num
-              :logseq.property/query-properties [:block :page :user.property/prop-string :user.property/prop-num]
-              :logseq.property/query-table true}
+      (is (= {:logseq.property.table/sorting [{:id :user.property/prop-num, :asc? false}]
+              :logseq.property.view/type "Table View"
+              :logseq.property.table/ordered-columns [:block/title :user.property/prop-string :user.property/prop-num]}
              (readable-properties @conn (find-block-by-content @conn "{{query (property :prop-string)}}")))
           "query block has correct query properties"))
 

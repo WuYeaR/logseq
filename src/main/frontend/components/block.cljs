@@ -328,11 +328,12 @@
                         (let [*local-selected? (atom local?)]
                           (-> (shui/dialog-confirm!
                                 [:div.text-xs.opacity-60.-my-2
-                                 [:label.flex.gap-1.items-center
-                                  (shui/checkbox
-                                    {:default-checked @*local-selected?
-                                     :on-checked-change #(reset! *local-selected? %)})
-                                  (t (if local? :asset/physical-delete ""))]]
+                                 (when local?
+                                   [:label.flex.gap-1.items-center
+                                    (shui/checkbox
+                                      {:default-checked @*local-selected?
+                                       :on-checked-change #(reset! *local-selected? %)})
+                                    (t :asset/physical-delete)])]
                                 {:title (t :asset/confirm-delete (.toLocaleLowerCase (t :text/image)))
                                  :outside-cancel? true})
                             (p/then (fn []
@@ -1013,7 +1014,7 @@
                                  [(breadcrumb config repo id {:indent? true})
                                   (blocks-container
                                     (assoc config :id (str id) :preview? true)
-                                    (db/get-block-and-children repo id))]])]
+                                    [(db/entity [:block/uuid id])])]])]
     (popup-preview-impl children
       {:visible? visible? :set-visible! set-visible!
        :*timer *timer :*timer1 *timer1
@@ -1025,7 +1026,8 @@
              (db-async/<get-block (state/get-current-repo) block-id :children? false))
            state)}
   [config id label]
-  (when (not= (:block/uuid (:block config)) id)
+  (if (= (:block/uuid (:block config)) id)
+    [:span.warning.text-sm "Self reference"]
     (if-let [block-id (if (uuid? id) id (parse-uuid id))]
       (if (state/sub-async-query-loading (str block-id))
         [:span "Loading..."]

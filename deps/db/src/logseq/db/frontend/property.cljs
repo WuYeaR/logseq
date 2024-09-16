@@ -67,15 +67,6 @@
                                                     :hide? true}}
    :logseq.property/built-in?             {:schema {:type :checkbox
                                                     :hide? true}}
-   :logseq.property/query-table {:schema {:type :checkbox
-                                          :hide? true}}
-   ;; query-properties is a coll of property db-idents and keywords where keywords are special frontend keywords
-   :logseq.property/query-properties {:schema {:type :coll
-                                               :hide? true}}
-   :logseq.property/query-sort-by {:schema {:type :keyword
-                                            :hide? true}}
-   :logseq.property/query-sort-desc {:schema {:type :checkbox
-                                              :hide? true}}
    :logseq.property/ls-type {:schema {:type :keyword
                                       :hide? true}}
    :logseq.property/hl-type {:schema {:type :keyword :hide? true}}
@@ -241,6 +232,10 @@
 (def db-attribute-properties
   "Internal properties that are also db schema attributes"
   #{:block/alias :block/tags})
+
+(def read-only-properties
+  "Property values that shouldn't be updated"
+  #{:logseq.property/built-in?})
 
 (assert (= db-attribute-properties
            (set (keep (fn [[k {:keys [attribute]}]] (when attribute k))
