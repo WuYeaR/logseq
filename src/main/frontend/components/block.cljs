@@ -769,25 +769,21 @@
     [:span.warning.mr-1 {:title "Node ref invalid"}
    (->ref id)]))
 
-(rum/defcs page-cp < db-mixins/query rum/reactive
-  {:init (fn [state]
-           (let [page (last (:rum/args state))]
-             (assoc state ::entity
-                    (if (e/entity? page)
-                      page
-                      ;; Use uuid when available to uniquely identify case sensitive contexts
-                      (db/get-page (or (:block/uuid page)
-                                       (when-let [s (:block/name page)]
-                                         (let [s (string/trim s)
-                                               s (if (string/starts-with? s db-content/page-ref-special-chars)
-                                                   (common-util/safe-subs s 2)
-                                                   s)]
-                                           s))))))))}
+(rum/defcs page-cp-inner < db-mixins/query rum/reactive
   "Component for a page. `page` argument contains :block/name which can be (un)sanitized page name.
    Keys for `config`:
    - `:preview?`: Is this component under preview mode? (If true, `page-preview-trigger` won't be registered to this `page-cp`)"
   [state {:keys [label children preview? disable-preview?] :as config} page]
-  (let [entity (::entity state)]
+  (let [entity (if (e/entity? page)
+                 page
+                 ;; Use uuid when available to uniquely identify case sensitive contexts
+                 (db/get-page (or (:block/uuid page)
+                                  (when-let [s (:block/name page)]
+                                    (let [s (string/trim s)
+                                          s (if (string/starts-with? s db-content/page-ref-special-chars)
+                                              (common-util/safe-subs s 2)
+                                              s)]
+                                      s)))))]
     (let [entity (when entity (db/sub-block (:db/id entity)))]
       (cond
         entity
@@ -814,6 +810,11 @@
 
         :else
         nil))))
+
+(rum/defc page-cp
+  [config page]
+  (rum/with-key (page-cp-inner config page)
+    (or (str (:block/uuid page)) (:block/name page))))
 
 (rum/defc asset-reference
   [config title path]
@@ -2528,10 +2529,10 @@
         mouse-down-key (if (util/ios?)
                          :on-click
                          :on-pointer-down) ; TODO: it seems that Safari doesn't work well with on-pointer-down
-
         attrs (cond->
                {:blockid       (str uuid)
-                :class (when (:property-block? config) "jtrigger")
+                :class (util/classnames [{:jtrigger (:property-block? config)
+                                          :!cursor-pointer (:page-title? config)}])
                 :containerid (:container-id config)
                 :data-type (name block-type)
                 :style {:width "100%"
@@ -2544,14 +2545,17 @@
 
                 (not block-ref?)
                 (assoc mouse-down-key (fn [e]
-                                        (cond (:from-journals? config)
-                                              (do
-                                                (.preventDefault e)
-                                                (route-handler/redirect-to-page! (:block/uuid block)))
-                                              (ldb/journal? block)
-                                              (.preventDefault e)
-                                              :else
-                                              (block-content-on-pointer-down e block block-id content edit-input-id config)))))]
+                                        (cond
+                                          (util/right-click? e)
+                                          nil
+                                          (:from-journals? config)
+                                          (do
+                                            (.preventDefault e)
+                                            (route-handler/redirect-to-page! (:block/uuid block)))
+                                          (ldb/journal? block)
+                                          (.preventDefault e)
+                                          :else
+                                          (block-content-on-pointer-down e block block-id content edit-input-id config)))))]
     [:div.block-content.inline
      (cond-> {:id (str "block-content-" uuid)
               :on-pointer-up (fn [e]
@@ -2680,7 +2684,8 @@
       [:div.flex.flex-1.flex-row.gap-1.items-center
        (if (and edit? editor-box)
          [:div.editor-wrapper.flex.flex-1
-          {:id editor-id}
+          {:id editor-id
+           :class (util/classnames [{:opacity-50 (boolean (or (ldb/built-in? block) (ldb/journal? block)))}])}
           (ui/catch-error
            (ui/block-error "Something wrong in the editor" {})
            (editor-box {:block block
