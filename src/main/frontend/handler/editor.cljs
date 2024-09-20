@@ -1280,7 +1280,7 @@
     (and (state/selection?) (= direction (state/get-selection-direction)))
     (let [f (if (= :up direction) util/get-prev-block-non-collapsed util/get-next-block-non-collapsed-skip)
           first-last (if (= :up direction) first last)
-          element (f (first-last (state/get-selection-blocks)))]
+          element (f (first-last (state/get-selection-blocks)) {:up-down? true})]
       (when element
         (util/scroll-to-block element)
         (state/conj-selection-block! element direction)))
@@ -1289,7 +1289,7 @@
     (state/selection?)
     (let [f (if (= :up direction) util/get-prev-block-non-collapsed util/get-next-block-non-collapsed)
           last-first (if (= :up direction) last first)
-          element (f (last-first (state/get-selection-blocks)))]
+          element (f (last-first (state/get-selection-blocks)) {:up-down? true})]
       (when element
         (util/scroll-to-block element)
         (state/drop-last-selection-block!))))
@@ -1652,7 +1652,7 @@
 
 (defn <get-matched-blocks
   "Return matched blocks that are not built-in"
-  [q]
+  [q & [{:keys [nlp-pages?]}]]
   (p/let [block (state/get-edit-block)
           nodes (search/block-search (state/get-current-repo) q {:built-in? false
                                                                  :enable-snippet? false})
@@ -1660,10 +1660,11 @@
                           (when-let [id (:block/uuid b)]
                             (when-not (= id (:block/uuid block)) ; avoid block self-reference
                               (db/entity [:block/uuid id]))))
-                        nodes)
-          matched-dates (map (fn [title] {:block/title title
-                                          :nlp-date? true}) date/nlp-pages)]
-    (-> (concat matched-dates matched)
+                        nodes)]
+    (-> (concat matched
+                (when nlp-pages?
+                  (map (fn [title] {:block/title title :nlp-date? true})
+                       date/nlp-pages)))
         (search/fuzzy-search q {:extract-fn :block/title :limit 50}))))
 
 (defn <get-matched-templates
@@ -2549,7 +2550,7 @@
         f (case direction
             :up util/get-prev-block-non-collapsed
             :down util/get-next-block-non-collapsed)
-        sibling-block (f selected)]
+        sibling-block (f selected {:up-down? true})]
     (when (and sibling-block (dom/attr sibling-block "blockid"))
       (util/scroll-to-block sibling-block)
       (state/exit-editing-and-set-selected-blocks! [sibling-block]))))
@@ -2563,7 +2564,7 @@
               :up util/get-prev-block-non-collapsed
               :down util/get-next-block-non-collapsed)
           current-block (util/rec-get-node input "ls-block")
-          sibling-block (f current-block)
+          sibling-block (f current-block {:up-down? true})
           {:block/keys [uuid title format]} (state/get-edit-block)]
       (if sibling-block
         (when-let [sibling-block-id (dom/attr sibling-block "blockid")]
@@ -2633,12 +2634,26 @@
         selected-start (util/get-selection-start input)
         selected-end (util/get-selection-end input)
         left? (= direction :left)
-        right? (= direction :right)]
-    (when (= input element)
+        right? (= direction :right)
+        block (some-> (state/get-edit-block) :db/id db/entity)
+        property? (ldb/property? block)]
+    (cond
+      (and input (not= input element))
+      (.focus input)
+
+      (= input element)
       (cond
+        (and property? right? (cursor/end? input) (not= (get-in block [:block/schema :type]) :default))
+        (let [pair (util/rec-get-node input "property-pair")
+              jtrigger (when pair (dom/sel1 pair ".property-value-container .jtrigger"))]
+          (when jtrigger
+            (.focus jtrigger)))
+
         (not= selected-start selected-end)
-        (if left?
+        (cond
+          left?
           (cursor/move-cursor-to input selected-start)
+          :else
           (cursor/move-cursor-to input selected-end))
 
         (or (and left? (cursor/start? input))
@@ -2648,7 +2663,10 @@
         :else
         (if left?
           (cursor/move-cursor-backward input)
-          (cursor/move-cursor-forward input))))))
+          (cursor/move-cursor-forward input)))
+
+      :else
+      nil)))
 
 (defn- delete-and-update [^js input start end]
   (util/safe-set-range-text! input "" start end)

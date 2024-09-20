@@ -104,27 +104,9 @@
 
 (rum/defc block-title < rum/static
   [config row]
-  (let [[show-open? set-show-open!] (rum/use-state false)
-        block-container (state/get-component :block/container)]
+  (let [block-container (state/get-component :block/container)]
     [:div.relative.w-full
-     {:on-mouse-over #(set-show-open! true)
-      :on-mouse-out #(set-show-open! false)}
-     (block-container (assoc config :table? true) row)
-     [:div.absolute.-top-1.right-0.transition-opacity
-      {:class (if show-open? "opacity-100" "opacity-0")}
-      (shui/button
-       {:variant :ghost
-        :size :sm
-        :class "!px-2 !py-0 text-muted-foreground"
-        :on-click (fn [e]
-                    (util/stop e)
-                    (let [page? (db/page? row)]
-                      (state/sidebar-add-block!
-                       (state/get-current-repo)
-                       (:db/id row)
-                       (if page? :page :block))))}
-       [:span.text-xs "Open"]
-       (ui/icon "layout-sidebar-right" {:size 14}))]]))
+     (block-container (assoc config :table? true) row)]))
 
 (defn build-columns
   [config properties & {:keys [with-object-name?]
@@ -1051,7 +1033,20 @@
 
        (table-view table option row-selection add-new-object! ready?))]))
 
-(rum/defc view < rum/reactive
+(rum/defc view
+  "Provides a view for data like query results and tagged objects, multiple
+   layouts such as table and list are supported. Args:
+   * view-entity: a db Entity
+   * option:
+     * title-key: dict key defaults to `:views.table/default-title`
+     * data: a collections of entities
+     * set-data!: `fn` to update `data`
+     * columns: view columns including properties and db attributes, which could be built by `build-columns`
+     * add-new-object!: `fn` to create a new object (or row)
+     * show-add-property?: whether to show `Add property`
+     * add-property!: `fn` to add a new property (or column)
+     * on-delete-rows: `fn` to trigger when deleting selected objects"
+  < rum/reactive
   [view-entity option]
   (let [view-entity' (db/sub-block (:db/id view-entity))]
     (rum/with-key (view-inner view-entity' option)
