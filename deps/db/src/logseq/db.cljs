@@ -1,7 +1,8 @@
 (ns logseq.db
   "Main namespace for public db fns. For DB and file graphs.
    For shared file graph only fns, use logseq.graph-parser.db"
-  (:require [clojure.string :as string]
+  (:require [clojure.set :as set]
+            [clojure.string :as string]
             [datascript.core :as d]
             [datascript.impl.entity :as de]
             [logseq.common.config :as common-config]
@@ -16,7 +17,8 @@
             [logseq.db.sqlite.common-db :as sqlite-common-db]
             [logseq.db.sqlite.util :as sqlite-util]
             [logseq.db.frontend.content :as db-content]
-            [logseq.db.frontend.property :as db-property])
+            [logseq.db.frontend.property :as db-property]
+            [logseq.common.util.namespace :as ns-util])
   (:refer-clojure :exclude [object?]))
 
 ;; Use it as an input argument for datalog queries
@@ -188,7 +190,6 @@
   [block]
   (assert (or (de/entity? block) (nil? block)))
   (first (sort-by-order (:block/_parent block))))
-
 
 (defn get-pages
   [db]
@@ -450,7 +451,6 @@
     (when (seq refs)
       (d/pull-many db '[*] (map :db/id refs)))))
 
-
 (defn get-block-refs-count
   [db id]
   (some-> (d/entity db id)
@@ -607,18 +607,43 @@
        (map (fn [d]
               (d/entity db (:e d))))))
 
-(defn get-class-parents
-  [class]
-  (let [*classes (atom #{})]
-    (when-let [parent (:logseq.property/parent class)]
-      (loop [current-parent parent]
-        (when (and
-               current-parent
-               (class? current-parent)
-               (not (contains? @*classes (:db/id current-parent))))
-          (swap! *classes conj (:db/id current-parent))
-          (recur (:logseq.property/parent current-parent)))))
-    @*classes))
+(defn get-page-parents
+  [node & {:keys [node-class?]}]
+  (when-let [parent (:logseq.property/parent node)]
+    (loop [current-parent parent
+           parents []]
+      (if (and
+           current-parent
+           (if node-class? (class? current-parent) true)
+           (not (contains? parents current-parent)))
+        (recur (:logseq.property/parent current-parent)
+               (conj parents current-parent))
+        (vec (reverse parents))))))
+
+(defn get-title-with-parents
+  [entity]
+  (if (contains? #{"page" "class"} (:block/type entity))
+    (let [parents (get-page-parents entity)]
+      (string/join
+       ns-util/parent-char
+       (map :block/title (conj parents entity))))
+    (:block/title entity)))
+
+(defn get-classes-parents
+  [tags]
+  (let [tags' (filter class? tags)
+        result (mapcat get-page-parents tags' {:node-class? true})]
+    (set result)))
+
+(defn class-instance?
+  "Whether `object` is an instance of `class`"
+  [class object]
+  (let [tags (:block/tags object)
+        tags-ids (set (map :db/id tags))]
+    (or
+     (contains? tags-ids (:db/id class))
+     (let [class-parents (get-classes-parents tags)]
+       (contains? (set/union class-parents tags-ids) (:db/id class))))))
 
 (defn get-all-pages-views
   [db]
