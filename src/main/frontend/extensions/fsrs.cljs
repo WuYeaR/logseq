@@ -101,27 +101,29 @@
              q)]
     (db-async/<q repo {:transact-db? false} q' now-inst-ms (:rules result))))
 
-(defn- btn-with-shortcut [{:keys [shortcut id btn-text background on-click class]}]
-  (shui/button
-   {:variant :outline
-    :auto-focus false
-    :size :sm
-    :id id
-    :class (str id " " class " !px-2 !py-1")
-    :background background
-    :on-pointer-down (fn [e] (util/stop-propagation e))
-    :on-click (fn [_e]
-                (js/setTimeout #(on-click) 10))}
-   [:div.flex.flex-row.items-center.gap-1
-    [:span btn-text]
-    (when-not (util/sm-breakpoint?)
-      (shui/button
-       {:variant :outline
-        :tab-index -1
-        :auto-focus false
-        :class "text-muted-foreground !px-1 !py-0 !h-4"
-        :size :sm}
-       [:span.text-sm shortcut]))]))
+(defn- btn-with-shortcut [{:keys [shortcut id btn-text due on-click class]}]
+  (let [bg-class (case id
+                   "card-again" "primary-red"
+                   "card-hard" "primary-purple"
+                   "card-good" "primary-logseq"
+                   "card-easy" "primary-green"
+                   nil)]
+    [:div.flex.flex-row.items-center.gap-2
+     (shui/button
+      {:variant :outline
+       :title (str "Shortcut: " shortcut)
+       :auto-focus false
+       :size :sm
+       :id id
+       :class (str id " " class " !px-2 !py-1 bg-primary/5 hover:bg-primary/10
+        border-primary opacity-90 hover:opacity-100 " bg-class)
+       :on-pointer-down (fn [e] (util/stop-propagation e))
+       :on-click (fn [_e] (js/setTimeout #(on-click) 10))}
+      [:div.flex.flex-row.items-center.gap-1
+       [:span btn-text]
+       (when-not (util/sm-breakpoint?)
+         [:span.scale-90 (shui/shortcut shortcut)])])
+     (when due [:div.text-sm.opacity-50 (util/human-time due {:ago? false})])]))
 
 (defn- has-cloze?
   [block]
@@ -145,39 +147,43 @@
    :easy  "4"})
 
 (defn- rating-btns
-  [repo block-id *card-index *phase]
-  [:div.flex.flex-row.items-center.gap-2.flex-wrap
-   (mapv
-    (fn [rating]
-      (btn-with-shortcut {:btn-text (string/capitalize (name rating))
-                          :shortcut (rating->shortcut rating)
-                          :id (str "card-" (name rating))
-                          :on-click #(do (repeat-card! repo block-id rating)
-                                         (swap! *card-index inc)
-                                         (reset! *phase :init))}))
-    (keys rating->shortcut))
-   (shui/button
-    {:variant :ghost
-     :size :sm
-     :class "!px-0 text-muted-foreground !h-4"
-     :on-click (fn [e]
-                 (shui/popup-show! (.-target e)
-                                   (fn []
-                                     [:div.p-4.max-w-lg
-                                      [:dl
-                                       [:dt "Again"]
-                                       [:dd "We got the answer wrong. Automatically means that we have forgotten the card. This is a lapse in memory."]]
-                                      [:dl
-                                       [:dt "Hard"]
-                                       [:dd "The answer was only partially correct and/or we took too long to recall it."]]
-                                      [:dl
-                                       [:dt "Good"]
-                                       [:dd "The answer was correct but we were not confident about it."]]
-                                      [:dl
-                                       [:dt "Easy"]
-                                       [:dd "The answer was correct and we were confident and quick in our recall."]]])
-                                   {:align "start"}))}
-    (ui/icon "info-circle"))])
+  [repo block *card-index *phase]
+  (let [block-id (:db/id block)]
+    [:div.flex.flex-row.items-center.gap-8.flex-wrap
+     (mapv
+      (fn [rating]
+        (let [card-map (get-card-map block)
+              due (:due (fsrs.core/repeat-card! card-map rating))]
+          (btn-with-shortcut {:btn-text (string/capitalize (name rating))
+                              :shortcut (rating->shortcut rating)
+                              :due due
+                              :id (str "card-" (name rating))
+                              :on-click #(do (repeat-card! repo block-id rating)
+                                             (swap! *card-index inc)
+                                             (reset! *phase :init))})))
+      (keys rating->shortcut))
+     (shui/button
+      {:variant :ghost
+       :size :sm
+       :class "!px-0 text-muted-foreground !h-4"
+       :on-click (fn [e]
+                   (shui/popup-show! (.-target e)
+                                     (fn []
+                                       [:div.p-4.max-w-lg
+                                        [:dl
+                                         [:dt "Again"]
+                                         [:dd "We got the answer wrong. Automatically means that we have forgotten the card. This is a lapse in memory."]]
+                                        [:dl
+                                         [:dt "Hard"]
+                                         [:dd "The answer was only partially correct and/or we took too long to recall it."]]
+                                        [:dl
+                                         [:dt "Good"]
+                                         [:dd "The answer was correct but we were not confident about it."]]
+                                        [:dl
+                                         [:dt "Easy"]
+                                         [:dd "The answer was correct and we were confident and quick in our recall."]]])
+                                     {:align "start"}))}
+      (ui/icon "info-circle"))]))
 
 (rum/defcs ^:private card-view < rum/reactive db-mixins/query
   {:will-mount (fn [state]
@@ -188,7 +194,7 @@
   (when-let [block-entity (db/sub-block block-id)]
     (let [phase (rum/react *phase)
           next-phase (phase->next-phase block-entity phase)]
-      [:div.ls-card.content
+      [:div.ls-card.content.flex.flex-col.overflow-y-auto.overflow-x-hidden
        [:div (component-block/breadcrumb {} repo (:block/uuid block-entity) {})]
        (let [option (case phase
                       :init
@@ -198,7 +204,7 @@
                        :hide-children? true}
                       {:show-cloze? true})]
          (component-block/blocks-container option [block-entity]))
-       [:div.mt-8
+       [:div.mt-8.pb-2
         (if (contains? #{:show-cloze :show-answer} next-phase)
           (btn-with-shortcut {:btn-text (t
                                          (case next-phase
@@ -213,7 +219,7 @@
                               :on-click #(swap! *phase
                                                 (fn [phase]
                                                   (phase->next-phase block-entity phase)))})
-          (rating-btns repo (:db/id block-entity) *card-index *phase))]])))
+          [:div.flex.justify-center (rating-btns repo block-entity *card-index *phase)])]])))
 
 (declare update-due-cards-count)
 (rum/defcs cards-view < rum/reactive
@@ -248,7 +254,7 @@
         *card-index (::card-index state)
         *phase (atom :init)]
     (when (false? loading?)
-      [:div#cards-modal.p-1.flex.flex-col.gap-8
+      [:div#cards-modal.flex.flex-col.gap-8.h-full.flex-1
        [:div.flex.flex-row.items-center.gap-2.flex-wrap
         (shui/select
          {:on-value-change (fn [v]

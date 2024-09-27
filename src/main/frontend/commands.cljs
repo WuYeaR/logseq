@@ -138,6 +138,92 @@
   [[:editor/input "" {:last-pattern command-trigger}]
    [:editor/search-block :embed]])
 
+(defn db-based-query
+  []
+  [[:editor/input "" {:last-pattern command-trigger}]
+   [:editor/set-property :block/tags :logseq.class/Query]])
+
+(defn file-based-query
+  []
+  [[:editor/input (str macro-util/query-macro " }}") {:backward-pos 2}]
+   [:editor/exit]])
+
+(defn query-steps
+  []
+  (if (config/db-based-graph? (state/get-current-repo))
+    (db-based-query)
+    (file-based-query)))
+
+(defn ->block
+  ([type]
+   (->block type nil))
+  ([type optional]
+   (let [format (get (state/get-edit-block) :block/format)
+         markdown-src? (and (= format :markdown)
+                            (= (string/lower-case type) "src"))
+         [left right] (cond
+                        markdown-src?
+                        ["```" "\n```"]
+
+                        :else
+                        (->> ["#+BEGIN_%s" "\n#+END_%s"]
+                             (map #(util/format %
+                                                (string/upper-case type)))))
+         template (str
+                   left
+                   (if optional (str " " optional) "")
+                   "\n"
+                   right)
+         backward-pos (if (= type "src")
+                        (+ 1 (count right))
+                        (count right))]
+     [[:editor/input template {:type "block"
+                               :last-pattern command-trigger
+                               :backward-pos backward-pos}]])))
+
+(defn- advanced-query-steps
+  []
+  (if (config/db-based-graph? (state/get-current-repo))
+    [[:editor/input "" {:last-pattern command-trigger}]
+     [:editor/set-property :block/tags :logseq.class/Query]
+     [:editor/set-property :logseq.property/query ""]
+     [:editor/set-property-on-block-property :logseq.property/query :logseq.property.node/type :code]
+     [:editor/set-property-on-block-property :logseq.property/query :logseq.property.code/mode "clojure"]]
+    (->block "query")))
+
+(defn db-based-code-block
+  []
+  [[:editor/input "" {:last-pattern command-trigger}]
+   [:editor/set-property :logseq.property.node/type :code]
+   [:codemirror/focus]])
+
+(defn file-based-code-block
+  []
+  [[:editor/input "```\n```\n" {:type "block"
+                                :backward-pos 5
+                                :only-breakline? true}]
+   [:editor/select-code-block-mode]])
+
+(defn code-block-steps
+  []
+  (if (config/db-based-graph? (state/get-current-repo))
+    (db-based-code-block)
+    (file-based-code-block)))
+
+(defn quote-block-steps
+  []
+  (if (config/db-based-graph? (state/get-current-repo))
+    [[:editor/input "" {:last-pattern command-trigger}]
+     [:editor/set-property :logseq.property.node/type :quote]]
+    (->block "quote")))
+
+(defn math-block-steps
+  []
+  (if (config/db-based-graph? (state/get-current-repo))
+    [[:editor/input "" {:last-pattern command-trigger}]
+     [:editor/set-property :logseq.property.node/type :math]]
+    (->block "export" "latex")))
+
 (defn get-statuses
   []
   (let [db-based? (config/db-based-graph? (state/get-current-repo))
@@ -166,7 +252,7 @@
 (defn db-based-priorities
   []
   (map (fn [e] (:block/title e))
-    (db-pu/get-closed-property-values :logseq.task/priority)))
+       (db-pu/get-closed-property-values :logseq.task/priority)))
 
 (defn get-priorities
   []
@@ -206,39 +292,11 @@
 (defonce *matched-commands (atom nil))
 (defonce *initial-commands (atom nil))
 
-(defn ->block
-  ([type]
-   (->block type nil))
-  ([type optional]
-   (let [format (get (state/get-edit-block) :block/format)
-         markdown-src? (and (= format :markdown)
-                            (= (string/lower-case type) "src"))
-         [left right] (cond
-                        markdown-src?
-                        ["```" "\n```"]
-
-                        :else
-                        (->> ["#+BEGIN_%s" "\n#+END_%s"]
-                             (map #(util/format %
-                                                (string/upper-case type)))))
-         template (str
-                   left
-                   (if optional (str " " optional) "")
-                   "\n"
-                   right)
-         backward-pos (if (= type "src")
-                        (+ 1 (count right))
-                        (count right))]
-     [[:editor/input template {:type "block"
-                               :last-pattern command-trigger
-                               :backward-pos backward-pos}]])))
-
 (defn ->properties
   []
   [[:editor/clear-current-slash]
    [:editor/insert-properties]
    [:editor/move-cursor-to-properties]])
-
 
 (defn ^:large-vars/cleanup-todo commands-map
   [get-page-ref-text]
@@ -273,11 +331,17 @@
                         {:last-pattern command-trigger
                          :backward-pos 6}]] "Create a underline text decoration"
           :icon/underline])
-       ["Code block" [[:editor/input "```\n```\n" {:type "block"
-                                                   :backward-pos 5
-                                                   :only-breakline? true}]
-                      [:editor/select-code-block-mode]] "Insert code block"
-        :icon/code]]
+       ["Code block"
+        (code-block-steps)
+        "Insert code block"
+        :icon/code]
+       ["Quote"
+        (quote-block-steps)
+        "Create a quote block"
+        :icon/quote-block]
+       ["Math block"
+        (math-block-steps)
+        "Create a latex block"]]
 
       (headings)
 
@@ -316,38 +380,34 @@
         :icon/numberedChildren]]
 
       ;; https://orgmode.org/manual/Structure-Templates.html
-      (cond->
-       [["Quote" (->block "quote")
-         "Create a quote block"
-         :icon/quote-block
-         "BLOCK TYPE"]
-        ;; Should this be replaced by "Code block"?
-        ["Src" (->block "src") "Create a code block"]
-        ["Advanced Query" (->block "query") "Create an advanced query block"]
-        ["Latex export" (->block "export" "latex") "Create a latex block"]
-        ["Note" (->block "note") "Create a note block"]
-        ["Tip" (->block "tip") "Create a tip block"]
-        ["Important" (->block "important") "Create an important block"]
-        ["Caution" (->block "caution") "Create a caution block"]
-        ["Pinned" (->block "pinned") "Create a pinned block"]
-        ["Warning" (->block "warning") "Create a warning block"]
-        ["Example" (->block "example") "Create an example block"]
-        ["Export" (->block "export") "Create an export block"]
-        ["Verse" (->block "verse") "Create a verse block"]
-        ["Ascii" (->block "export" "ascii") "Create an ascii block"]
-        ["Center" (->block "center") "Create a center block"]]
+      (when-not db?
+        (cond->
+         [;; Should this be replaced by "Code block"?
+          ["Src" (->block "src") "Create a code block"]
+          ["Math block" (->block "export" "latex") "Create a latex block"]
+          ["Note" (->block "note") "Create a note block"]
+          ["Tip" (->block "tip") "Create a tip block"]
+          ["Important" (->block "important") "Create an important block"]
+          ["Caution" (->block "caution") "Create a caution block"]
+          ["Pinned" (->block "pinned") "Create a pinned block"]
+          ["Warning" (->block "warning") "Create a warning block"]
+          ["Example" (->block "example") "Create an example block"]
+          ["Export" (->block "export") "Create an export block"]
+          ["Verse" (->block "verse") "Create a verse block"]
+          ["Ascii" (->block "export" "ascii") "Create an ascii block"]
+          ["Center" (->block "center") "Create a center block"]]
 
         ;; FIXME: current page's format
-        (= :org (state/get-preferred-format))
-        (conj ["Properties" (->properties)]))
+          (= :org (state/get-preferred-format))
+          (conj ["Properties" (->properties)])))
 
       ;; advanced
       [["Query"
-        [[:editor/input (str macro-util/query-macro " }}") {:backward-pos 2}]
-         [:editor/exit]]
+        (query-steps)
         query-doc
         :icon/query
         "ADVANCED"]
+       ["Advanced Query" (advanced-query-steps) "Create an advanced query block" :icon/advanced-query]
        (when-not db?
          ["Zotero" (zotero-steps) "Import Zotero journal article" :icon/circle-letter-z])
        ["Query function" [[:editor/input "{{function }}" {:backward-pos 2}]] "Create a query function" :icon/queryCode]
@@ -688,6 +748,14 @@
     (when-let [block (state/get-edit-block)]
       (db-property-handler/set-block-property! (:db/id block) property-id value))))
 
+(defmethod handle-step :editor/set-property-on-block-property [[_ block-property-id property-id value]]
+  (when (config/db-based-graph? (state/get-current-repo))
+    (let [updated-block (when-let [block-uuid (:block/uuid (state/get-edit-block))]
+                          (db/entity [:block/uuid block-uuid]))
+          block-property-value (get updated-block block-property-id)]
+      (when block-property-value
+        (db-property-handler/set-block-property! (:db/id block-property-value) property-id value)))))
+
 (defn- file-based-set-priority
   [priority]
   (when-let [input-id (state/get-edit-input-id)]
@@ -823,11 +891,11 @@
 (defmethod handle-step :editor/select-code-block-mode [[_]]
   (-> (p/delay 50)
       (p/then
-        (fn []
-          (when-let [input (state/get-input)]
+       (fn []
+         (when-let [input (state/get-input)]
             ;; update action cursor position
-            (state/set-editor-action-data! {:pos (cursor/get-caret-pos input)})
-            (state/set-editor-action! :select-code-block-mode))))))
+           (state/set-editor-action-data! {:pos (cursor/get-caret-pos input)})
+           (state/set-editor-action! :select-code-block-mode))))))
 
 (defmethod handle-step :editor/click-hidden-file-input [[_ _input-id]]
   (when-let [input-file (gdom/getElement "upload-file")]
@@ -835,8 +903,8 @@
 
 (defmethod handle-step :editor/exit [[_]]
   (p/do!
-    (state/pub-event! [:editor/save-current-block])
-    (state/clear-edit!)))
+   (state/pub-event! [:editor/save-current-block])
+   (state/clear-edit!)))
 
 (defmethod handle-step :editor/new-property [[_]]
   (state/pub-event! [:editor/new-property]))
@@ -846,8 +914,11 @@
 
 (defn handle-steps
   [vector' format]
-  (doseq [step vector']
-    (handle-step step format)))
+  (if (config/db-based-graph? (state/get-current-repo))
+    (p/doseq [step vector']
+      (handle-step step format))
+    (doseq [step vector']
+      (handle-step step format))))
 
 (defn exec-plugin-simple-command!
   [pid {:keys [block-id] :as cmd} action]

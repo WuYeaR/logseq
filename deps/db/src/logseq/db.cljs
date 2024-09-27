@@ -611,22 +611,24 @@
   [node & {:keys [node-class?]}]
   (when-let [parent (:logseq.property/parent node)]
     (loop [current-parent parent
-           parents []]
+           parents' []]
       (if (and
            current-parent
            (if node-class? (class? current-parent) true)
-           (not (contains? parents current-parent)))
+           (not (contains? parents' current-parent)))
         (recur (:logseq.property/parent current-parent)
-               (conj parents current-parent))
-        (vec (reverse parents))))))
+               (conj parents' current-parent))
+        (vec (reverse parents'))))))
 
 (defn get-title-with-parents
   [entity]
   (if (contains? #{"page" "class"} (:block/type entity))
-    (let [parents (get-page-parents entity)]
+    (let [parents' (->> (get-page-parents entity)
+                        (remove (fn [e] (= :logseq.class/Root (:db/ident e))))
+                        vec)]
       (string/join
        ns-util/parent-char
-       (map :block/title (conj parents entity))))
+       (map :block/title (conj (vec parents') entity))))
     (:block/title entity)))
 
 (defn get-classes-parents

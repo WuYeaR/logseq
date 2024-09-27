@@ -9,7 +9,6 @@
             [frontend.db :as db]
             [frontend.db.async :as db-async]
             [frontend.db.model :as db-model]
-            [frontend.db.query-dsl :as query-dsl]
             [frontend.db.utils :as db-utils]
             [frontend.diff :as diff]
             [frontend.extensions.pdf.utils :as pdf-utils]
@@ -846,6 +845,7 @@
                           db-based? (config/db-based-graph? repo)
                           delete-prev-block? (and db-based?
                                                   (empty? (:block/tags block))
+                                                  (not (:logseq.property.node/type block))
                                                   (seq (:block/properties block))
                                                   (empty? (:block/properties prev-block))
                                                   (not (:logseq.property/created-from-property block)))]
@@ -2871,9 +2871,10 @@
         ;; stop accepting edits if the new block is not created yet
         (some? @(:editor/async-unsaved-chars @state/state))
         (do
-          (when (not= key "Enter")
+          (when (= 1 (count (str key)))
             (state/update-state! :editor/async-unsaved-chars
-                                 (fn [s] (str s key))))
+                                 (fn [s]
+                                   (str s key))))
           (util/stop e))
 
         (and (contains? #{"ArrowLeft" "ArrowRight"} key)
@@ -3349,35 +3350,19 @@
            (mldoc/block-with-title? first-elem-type))
          true)))
 
-(defn- valid-dsl-query-block?
-  "Whether block has a valid dsl query."
-  [block repo]
-  (if (config/db-based-graph? repo)
-    (when-let [title (:block/title block)]
-      (string/includes? title "{{query"))
-    (->> (:block/macros (db/entity (:db/id block)))
-         (some (fn [macro]
-                 (let [properties (:block/properties macro)
-                       macro-name (:logseq.macro-name properties)
-                       macro-arguments (:logseq.macro-arguments properties)]
-                   (when-let [query-body (and (= "query" macro-name) (not-empty (string/join " " macro-arguments)))]
-                     (seq (:query
-                           (try
-                             (query-dsl/parse-query query-body)
-                             (catch :default _e
-                               nil)))))))))))
-
-(defn- valid-custom-query-block?
-  "Whether block has a valid custom query."
+(defn- db-collapsable?
   [block]
-  (let [entity (db/entity (:db/id block))
-        content (:block/title entity)]
-    (when content
-      (when (and (string/includes? content "#+BEGIN_QUERY")
-                 (string/includes? content "#+END_QUERY"))
-        (let [ast (mldoc/->edn (string/trim content) (or (:block/format entity) :markdown))
-              q (mldoc/extract-first-query-from-ast ast)]
-          (some? (:query (common-util/safe-read-string q))))))))
+  (let [property-keys (->> (keys (:block/properties block))
+                           (remove db-property/db-attribute-properties)
+                           (remove #(outliner-property/property-with-other-position? (db/entity %))))]
+    (or (and (seq property-keys)
+             (not (db-pu/all-hidden-properties? property-keys)))
+        (and (seq (:block/tags block))
+             (some (fn [t]
+                     (let [properties (map :db/ident (:logseq.property.class/properties t))]
+                       (prn :tags (:block/title t) properties)
+                       (and (seq properties)
+                            (not (db-pu/all-hidden-properties? properties))))) (:block/tags block))))))
 
 (defn collapsable?
   ([block-id]
@@ -3388,23 +3373,12 @@
    (when block-id
      (let [repo (state/get-current-repo)]
        (if-let [block (db/entity [:block/uuid block-id])]
-         (let [db-based? (config/db-based-graph? repo)
-               tags (:block/tags (db/entity (:db/id block)))
-               property-keys (->> (keys (:block/properties block))
-                                  (remove db-property/db-attribute-properties)
-                                  (remove #(outliner-property/property-with-other-position? (db/entity %))))]
+         (let [db-based? (config/db-based-graph? repo)]
            (or (if ignore-children? false (db-model/has-children? block-id))
-               (valid-dsl-query-block? block repo)
-               (valid-custom-query-block? block)
-               (and db-based? (ldb/class-instance? (db/entity :logseq.class/Query) block))
-               (and db-based?
-                    (seq property-keys)
-                    (not (db-pu/all-hidden-properties? property-keys)))
-               (and db-based? (seq tags)
-                    (some (fn [t]
-                            (let [properties (map :db/ident (:logseq.property.class/properties (:block/schema t)))]
-                              (and (seq properties)
-                                   (not (db-pu/all-hidden-properties? properties))))) tags))
+               (and db-based? (db-collapsable? block))
+               (and (not db-based?)
+                    (or (file-editor-handler/valid-dsl-query-block? block)
+                        (file-editor-handler/valid-custom-query-block? block)))
                (and
                 (:outliner/block-title-collapse-enabled? (state/get-config))
                 (block-with-title? (:block/format block)

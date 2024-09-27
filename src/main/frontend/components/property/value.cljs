@@ -1,41 +1,43 @@
 (ns frontend.components.property.value
-  (:require [clojure.string :as string]
-            [frontend.components.select :as select]
+  (:require [cljs-time.coerce :as tc]
+            [clojure.string :as string]
+            [datascript.impl.entity :as de]
+            [dommy.core :as d]
             [frontend.components.icon :as icon-component]
+            [frontend.components.query.builder :as query-builder-component]
+            [frontend.components.select :as select]
+            [frontend.components.title :as title]
             [frontend.config :as config]
             [frontend.date :as date]
             [frontend.db :as db]
             [frontend.db-mixins :as db-mixins]
+            [frontend.db.async :as db-async]
             [frontend.db.model :as model]
+            [frontend.handler.block :as block-handler]
+            [frontend.handler.db-based.page :as db-page-handler]
+            [frontend.handler.db-based.property :as db-property-handler]
             [frontend.handler.editor :as editor-handler]
             [frontend.handler.page :as page-handler]
-            [frontend.handler.block :as block-handler]
             [frontend.handler.property :as property-handler]
-            [frontend.handler.db-based.property :as db-property-handler]
-            [frontend.handler.db-based.page :as db-page-handler]
+            [frontend.handler.property.util :as pu]
+            [frontend.handler.route :as route-handler]
+            [frontend.modules.outliner.ui :as ui-outliner-tx]
+            [frontend.search :as search]
             [frontend.state :as state]
             [frontend.ui :as ui]
-            [logseq.shui.ui :as shui]
             [frontend.util :as util]
+            [goog.dom :as gdom]
+            [goog.functions :refer [debounce]]
             [lambdaisland.glogi :as log]
-            [rum.core :as rum]
-            [promesa.core :as p]
-            [frontend.db.async :as db-async]
+            [logseq.common.util :as common-util]
             [logseq.common.util.macro :as macro-util]
             [logseq.db :as ldb]
             [logseq.db.frontend.property :as db-property]
-            [datascript.impl.entity :as de]
-            [frontend.handler.property.util :as pu]
             [logseq.db.frontend.property.type :as db-property-type]
-            [dommy.core :as d]
-            [goog.dom :as gdom]
-            [frontend.search :as search]
-            [goog.functions :refer [debounce]]
-            [frontend.handler.route :as route-handler]
-            [frontend.components.title :as title]
-            [cljs-time.coerce :as tc]
-            [frontend.modules.outliner.ui :as ui-outliner-tx]
-            [frontend.components.query.builder :as query-builder-component]))
+            [logseq.shui.ui :as shui]
+            [promesa.core :as p]
+            [rum.core :as rum]
+            [frontend.modules.outliner.op :as outliner-op]))
 
 (rum/defc property-empty-btn-value
   [property & opts]
@@ -462,9 +464,13 @@
            (let [;; Disallows cyclic hierarchies
                  exclude-ids (-> (set (map (fn [id] (:block/uuid (db/entity id))) children-pages))
                                  (conj (:block/uuid block))) ; break cycle
-                 options (if (ldb/class? block) (model/get-all-classes repo)
-                             (->> (model/get-all-pages repo)
-                                  (remove (fn [e] (or (ldb/built-in? e) (ldb/property? e))))))
+                 options (if (ldb/class? block)
+                           (model/get-all-classes repo)
+                           (cond->>
+                            (->> (model/get-all-pages repo)
+                                 (remove (fn [e] (or (ldb/built-in? e) (ldb/property? e)))))
+                             (contains? #{"property" "page"} (:block/type block))
+                             (remove ldb/class?)))
                  excluded-options (remove (fn [e] (contains? exclude-ids (:block/uuid e))) options)]
              excluded-options)
 
@@ -709,6 +715,50 @@
         :on-click (fn [] (<create-new-block! block property ""))}
        (property-empty-btn-value property)])))
 
+(rum/defcs query-cp <
+  (rum/local false ::show-setting?)
+  [state block property v-block]
+  (let [result (common-util/safe-read-string (:block/title v-block))
+        advanced-query? (or (and (map? result) (:query result))
+                            (string/starts-with? (string/triml (:block/title v-block)) "{"))]
+    [:div.flex.flex-1.flex-row.gap-1.justify-between
+     [:div.flex.flex-1 (property-normal-block-value block property v-block)]
+     (when-not advanced-query?
+       (shui/button
+        {:variant :ghost
+         :size :sm
+         :class "jtrigger px-1 text-muted-foreground"
+         :title "Update query"
+         :on-click (fn [e]
+                     (shui/popup-show!
+                      (.-target e)
+                      (fn []
+                        (let [block (db/entity (:db/id v-block))
+                              query (:block/title block)]
+                          [:div.p-4.h-64.flex.flex-col.gap-4 {:style {:width "42rem"}}
+                           [:div.flex.flex-1
+                            (query-builder-component/builder query {:property property
+                                                                    :block block})]
+
+                           [:div
+                            (shui/button
+                             {:variant :ghost
+                              :size :sm
+                              :class "text-muted-foreground"
+                              :on-click (fn []
+                                          (p/do!
+                                           (ui-outliner-tx/transact!
+                                            {:outliner-op :save-block}
+                                            (db-property-handler/set-block-properties! (:db/id block)
+                                                                                       {:logseq.property.node/type :code
+                                                                                        :logseq.property.code/mode "clojure"})
+                                            (outliner-op/save-block! {:db/id (:db/id block) :block/title ""}))
+
+                                           (shui/popup-hide!)))}
+                             "Switch to advanced query")]]))
+                      {:align :end}))}
+        (ui/icon "settings" {:size 18})))]))
+
 (rum/defcs property-block-value < rum/reactive db-mixins/query
   {:init (fn [state]
            (let [block (first (:rum/args state))]
@@ -726,9 +776,7 @@
           (when v-block
             (cond
               (= (:db/ident property) :logseq.property/query)
-              (let [query (:block/title v-block)]
-                (query-builder-component/builder query {:property property
-                                                        :block v-block}))
+              (query-cp block property v-block)
 
               (:block/page v-block)
               (property-normal-block-value block property v-block)

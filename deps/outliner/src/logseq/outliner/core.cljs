@@ -4,26 +4,23 @@
             [clojure.string :as string]
             [datascript.core :as d]
             [datascript.impl.entity :as de :refer [Entity]]
+            [logseq.common.util :as common-util]
+            [logseq.db :as ldb]
+            [logseq.db.frontend.order :as db-order]
+            [logseq.db.frontend.property.util :as db-property-util]
             [logseq.db.frontend.schema :as db-schema]
+            [logseq.db.sqlite.create-graph :as sqlite-create-graph]
+            [logseq.db.sqlite.util :as sqlite-util]
+            [logseq.graph-parser.block :as gp-block]
+            [logseq.graph-parser.db :as gp-db]
+            [logseq.graph-parser.property :as gp-property]
+            [logseq.outliner.batch-tx :include-macros true :as batch-tx]
             [logseq.outliner.datascript :as ds]
+            [logseq.outliner.pipeline :as outliner-pipeline]
             [logseq.outliner.tree :as otree]
             [logseq.outliner.validate :as outliner-validate]
-            [logseq.common.util :as common-util]
             [malli.core :as m]
-            [malli.util :as mu]
-            [logseq.db :as ldb]
-            [logseq.graph-parser.property :as gp-property]
-            [logseq.graph-parser.db :as gp-db]
-            [logseq.graph-parser.block :as gp-block]
-            [logseq.db.frontend.property.util :as db-property-util]
-            [logseq.db.sqlite.util :as sqlite-util]
-            [logseq.db.sqlite.create-graph :as sqlite-create-graph]
-            [logseq.outliner.batch-tx :include-macros true :as batch-tx]
-            [logseq.db.frontend.order :as db-order]
-            [logseq.outliner.pipeline :as outliner-pipeline]
-            [logseq.common.util.macro :as macro-util]
-            [logseq.db.frontend.class :as db-class]
-            [logseq.common.util.namespace :as ns-util]))
+            [malli.util :as mu]))
 
 (def ^:private block-map
   (mu/optional-keys
@@ -248,104 +245,10 @@
          (map (fn [tag]
                 [:db/retract (:db/id block) :block/tags (:db/id tag)])))))
 
-(defn- get-page-by-parent-name
-  [db parent-title child-title]
-  (some->>
-   (d/q
-    '[:find [?b ...]
-      :in $ ?parent-name ?child-name
-      :where
-      [?b :logseq.property/parent ?p]
-      [?b :block/name ?child-name]
-      [?p :block/name ?parent-name]]
-    db
-    (common-util/page-name-sanity-lc parent-title)
-    (common-util/page-name-sanity-lc child-title))
-   first
-   (d/entity db)))
-
-(defn ^:api split-namespace-pages
-  [db page-or-pages tags date-formatter & {:keys [*changed-uuids]}]
-  (let [pages (if (map? page-or-pages) [page-or-pages] page-or-pages)
-        tags-set (set (map :block/uuid tags))]
-    (->>
-     (mapcat
-      (fn [{:block/keys [title] :as page}]
-        (let [block-uuid (:block/uuid page)
-              block-type (if (contains? tags-set (:block/uuid page))
-                           "class"
-                           (:block/type page))]
-          (if (and (contains? #{"page" "class"} block-type) (ns-util/namespace-page? title))
-            (let [class? (= block-type "class")
-                  parts (->> (string/split title ns-util/parent-re)
-                             (map string/trim)
-                             (remove string/blank?))
-                  pages (doall
-                         (map-indexed
-                          (fn [idx part]
-                            (let [last-part? (= idx (dec (count parts)))
-                                  page (if (zero? idx)
-                                         (ldb/get-page db part)
-                                         (get-page-by-parent-name db (nth parts (dec idx)) part))
-                                  result (or page
-                                             (when last-part? (ldb/get-page db part))
-                                             (-> (gp-block/page-name->map part db true date-formatter
-                                                                          {:page-uuid (when last-part? block-uuid)})
-                                                 (assoc :block/format :markdown)))]
-                              (when (and last-part? (not= (:block/uuid result) block-uuid)
-                                         *changed-uuids)
-                                (swap! *changed-uuids assoc block-uuid (:block/uuid result)))
-                              result))
-                          parts))]
-              (map-indexed
-               (fn [idx page]
-                 (let [parent-eid (when (> idx 0)
-                                    (when-let [id (:block/uuid (nth pages (dec idx)))]
-                                      [:block/uuid id]))]
-                   (if class?
-                     (cond
-                       (and (de/entity? page) (ldb/class? page))
-                       page
-                       (de/entity? page) ; page exists but not a class, avoid converting here becuase this could be troublesome.
-                       nil
-                       (zero? idx)
-                       (db-class/build-new-class db page)
-                       :else
-                       (db-class/build-new-class db (assoc page :logseq.property/parent parent-eid)))
-                     (if (or (de/entity? page) (zero? idx))
-                       page
-                       (assoc page :logseq.property/parent parent-eid)))))
-               pages))
-            [page])))
-      pages)
-     (remove nil?))))
-
-(defn- build-page-parents
-  [db m date-formatter raw-title]
-  (let [refs (:block/refs m)
-        tags (:block/tags m)
-        *changed-uuids (atom {})
-        refs' (split-namespace-pages db refs tags date-formatter
-                                     {:*changed-uuids *changed-uuids})
-        tags' (map (fn [tag]
-                     (or (first (filter (fn [ref] (= (:block/uuid ref) (:block/uuid tag))) refs')) tag))
-                   tags)
-        raw-title' (if (seq @*changed-uuids)
-                     (reduce
-                      (fn [raw-content [old-id new-id]]
-                        (string/replace raw-content (str old-id) (str new-id)))
-                      raw-title
-                      @*changed-uuids)
-                     raw-title)]
-    (assoc m
-           :block/refs refs'
-           :block/title raw-title'
-           :block/tags tags')))
-
 (extend-type Entity
   otree/INode
-  (-save [this txs-state conn repo date-formatter {:keys [retract-attributes? retract-attributes]
-                                                   :or {retract-attributes? true}}]
+  (-save [this txs-state conn repo _date-formatter {:keys [retract-attributes? retract-attributes]
+                                                    :or {retract-attributes? true}}]
     (assert (ds/outliner-txs-state? txs-state)
             "db should be satisfied outliner-tx-state?")
     (let [data this
@@ -386,10 +289,7 @@
               (outliner-validate/validate-block-title db (:block/title m*) block-entity))
           m (cond-> m*
               db-based?
-              (dissoc :block/pre-block? :block/priority :block/marker :block/properties-order))
-          m (if db-based?
-              (build-page-parents db m date-formatter (:block/title m))
-              m)]
+              (dissoc :block/pre-block? :block/priority :block/marker :block/properties-order))]
       ;; Ensure block UUID never changes
       (let [e (d/entity db db-id)]
         (when (and e block-uuid)
@@ -438,15 +338,6 @@
         (let [tx-data (remove-tags-when-title-changed block-entity (:block/title m))]
           (when (seq tx-data)
             (swap! txs-state (fn [txs] (concat txs tx-data))))))
-
-      ;; Add Query class when a query macro is typed or pasted
-      (when (and db-based?
-                 (not= (:block/title m*) (:block/title block-entity))
-                 (macro-util/query-macro? (:block/title m*))
-                 (empty? (:block/tags block-entity)))
-        (swap! txs-state (fn [txs]
-                           (conj (vec txs)
-                                 [:db/add (:db/id block-entity) :block/tags :logseq.class/Query]))))
 
       this))
 

@@ -5,6 +5,7 @@
             [frontend.commands :as commands]
             [frontend.format.block :as block]
             [frontend.db :as db]
+            [frontend.db.query-dsl :as query-dsl]
             [frontend.format.mldoc :as mldoc]
             [frontend.state :as state]
             [frontend.modules.outliner.op :as outliner-op]
@@ -18,6 +19,7 @@
             [frontend.handler.file-based.property.util :as property-util]
             [logseq.db.frontend.schema :as db-schema]
             [logseq.common.util.block-ref :as block-ref]
+            [logseq.common.util :as common-util]
             [logseq.db :as ldb]))
 
 (defn- remove-non-existed-refs!
@@ -211,3 +213,30 @@
                  block-ids)
         col (remove nil? col)]
     (file-property-handler/batch-set-block-property-aux! col)))
+
+(defn valid-dsl-query-block?
+  "Whether block has a valid dsl query."
+  [block]
+  (->> (:block/macros (db/entity (:db/id block)))
+       (some (fn [macro]
+               (let [properties (:block/properties macro)
+                     macro-name (:logseq.macro-name properties)
+                     macro-arguments (:logseq.macro-arguments properties)]
+                 (when-let [query-body (and (= "query" macro-name) (not-empty (string/join " " macro-arguments)))]
+                   (seq (:query
+                         (try
+                           (query-dsl/parse-query query-body)
+                           (catch :default _e
+                             nil))))))))))
+
+(defn valid-custom-query-block?
+  "Whether block has a valid custom query."
+  [block]
+  (let [entity (db/entity (:db/id block))
+        content (:block/title entity)]
+    (when content
+      (when (and (string/includes? content "#+BEGIN_QUERY")
+                 (string/includes? content "#+END_QUERY"))
+        (let [ast (mldoc/->edn (string/trim content) (or (:block/format entity) :markdown))
+              q (mldoc/extract-first-query-from-ast ast)]
+          (some? (:query (common-util/safe-read-map-string q))))))))

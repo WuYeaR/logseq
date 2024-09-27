@@ -45,6 +45,7 @@
             [logseq.common.util.page-ref :as page-ref]
             [logseq.db :as ldb]
             [logseq.graph-parser.db :as gp-db]
+            [logseq.graph-parser.text :as text]
             [promesa.core :as p]))
 
 (def <create! page-common-handler/<create!)
@@ -166,7 +167,7 @@
 (defn load-more-journals!
   []
   (when (has-more-journals?)
-    (state/set-journals-length! (+ (:journals-length @state/state) 1))))
+    (state/set-journals-length! (+ (:journals-length @state/state) 7))))
 
 (defn update-public-attribute!
   [page value]
@@ -319,9 +320,12 @@
                      (string/replace-first (str (t :new-tag) " ") "")
                      (string/replace-first (str (t :new-page) " ") ""))
           wrapped? (= page-ref/left-brackets (common-util/safe-subs edit-content (- pos 2) pos))
-          wrapped-tag (if (and (util/safe-re-find #"\s+" chosen) (not wrapped?))
-                        (page-ref/->page-ref chosen)
-                        chosen)
+          chosen-last-part (if (text/namespace-page? chosen)
+                             (text/get-namespace-last-part chosen)
+                             chosen)
+          wrapped-tag (if (and (util/safe-re-find #"\s+" chosen-last-part) (not wrapped?))
+                        (page-ref/->page-ref chosen-last-part)
+                        chosen-last-part)
           q (if (editor-handler/get-selected-text) "" q)
           last-pattern (if wrapped?
                          q
