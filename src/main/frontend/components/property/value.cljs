@@ -350,7 +350,7 @@
                    (and (= :logseq.property/parent (:db/ident property))
                         (ldb/class? block)))
         ;; Note: property and other types shouldn't be converted to class
-        page? (= "page" (:block/type page-entity))]
+        page? (ldb/internal-page? page-entity)]
     (cond
       ;; page not exists or page exists but not a page type
       (or (nil? id) (and class? (not page?)))
@@ -464,11 +464,11 @@
                                  (conj (:block/uuid block))) ; break cycle
                  options (if (ldb/class? block)
                            (model/get-all-classes repo)
-                           (cond->>
-                            (->> (model/get-all-pages repo)
-                                 (remove (fn [e] (or (ldb/built-in? e) (ldb/property? e)))))
-                             (contains? #{"property" "page"} (:block/type block))
-                             (remove ldb/class?)))
+                           (when (ldb/internal-page? block)
+                             (cond->>
+                              (->> (model/get-all-pages repo)
+                                   (filter ldb/internal-page?)
+                                   (remove ldb/built-in?)))))
                  excluded-options (remove (fn [e] (contains? exclude-ids (:block/uuid e))) options)]
              excluded-options)
 
