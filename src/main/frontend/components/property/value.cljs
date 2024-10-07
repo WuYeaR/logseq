@@ -241,7 +241,7 @@
        :id @*ident
        :del-btn? del-btn?
        :on-delete on-delete
-       :on-select select-handler!}
+       :on-day-click select-handler!}
        initial-month
        (assoc :default-month initial-month)))))
 
@@ -330,7 +330,7 @@
                                       (property-handler/set-block-property! repo (:block/uuid block)
                                                                             (:db/ident property)
                                                                             (if (map? value) (:db/id value) value)))
-                         :del-btn? (some-> value (:block/title) (boolean))
+                         :del-btn? (some? value)
                          :on-delete (fn []
                                       (property-handler/set-block-property! repo (:block/uuid block)
                                                                             (:db/ident property) nil)
