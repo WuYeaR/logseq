@@ -2513,12 +2513,12 @@
     (when (seq properties)
       (case position
         :block-below
-        [:div.positioned-properties.block-below.flex.flex-row.gap-1.item-center.flex-wrap.text-sm.overflow-x-hidden.max-h-6
+        [:div.positioned-properties.block-below.flex.flex-row.gap-2.item-center.flex-wrap.text-sm.overflow-x-hidden
          (for [pid properties]
            (let [property (db/entity pid)
                  v (get block pid)]
              [:div.flex.flex-row.items-center.gap-2.hover:bg-secondary.rounded
-              [:div.flex.flex-row.opacity-50.hover:opacity-100
+              [:div.flex.flex-row.opacity-50.hover:opacity-100.items-center
                (property-component/property-key-cp block property opts)
                [:div.select-none ":"]]
               (pv/property-value block property v opts)]))]
@@ -2708,16 +2708,19 @@
                      (count (:block/_refs block))
                      (rum/react *refs-count))
         table? (:table? config)
+        editor-block (state/sub :editor/block)
+        raw-mode-block (state/sub :editor/raw-mode-block)
         type-block-editor? (and (contains? #{:code} (:logseq.property.node/display-type block))
-                                (not= (:db/id block) (:db/id (state/sub :editor/raw-mode-block))))
-        config (assoc config :block-parent-id block-id)]
+                                (not= (:db/id block) (:db/id raw-mode-block)))
+        config (assoc config :block-parent-id block-id)
+        editing-local? (or edit? (and editor-block (= (:db/id editor-block) (:db/id block))))]
     [:div.block-content-or-editor-wrap
      {:class (when (:page-title? config) "ls-page-title-container")
       :data-node-type (some-> (:logseq.property.node/display-type block) name)}
      (when (and db-based? (not table?)) (block-positioned-properties config block :block-left))
      [:div.block-content-or-editor-inner
       [:div.flex.flex-1.flex-row.gap-1.items-center
-       (if (and edit? editor-box (not type-block-editor?))
+       (if (and editor-box editing-local? (not type-block-editor?))
          [:div.editor-wrapper.flex.flex-1
           {:id editor-id
            :class (util/classnames [{:opacity-50 (boolean (or (ldb/built-in? block) (ldb/journal? block)))}])}
