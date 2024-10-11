@@ -942,6 +942,13 @@
                 nil
                 nil)))
 
+(defn- img-audio-video?
+  [block]
+  (let [asset-type (some-> (:logseq.property.asset/type block) keyword)]
+    (or (contains? (common-config/img-formats) asset-type)
+        (contains? config/audio-formats asset-type)
+        (contains? config/video-formats asset-type))))
+
 (rum/defc page-reference < rum/reactive
   "Component for page reference"
   [html-export? s {:keys [nested-link? show-brackets? id] :as config} label]
@@ -957,8 +964,12 @@
           config' (assoc config
                          :label (mldoc/plain->text label)
                          :contents-page? contents-page?
-                         :show-icon? true?)]
+                         :show-icon? true?)
+          asset? (some? (:logseq.property.asset/type block))]
       (cond
+        (and asset? (img-audio-video? block))
+        (asset-cp config block)
+
         (string/ends-with? s ".excalidraw")
         [:div.draw {:on-click (fn [e]
                                 (.stopPropagation e))}
@@ -2198,11 +2209,15 @@
       (text-block-title (dissoc config :raw-title?) block)
 
       (= "asset" (:block/type block))
-      (asset-cp config block)
+      [:div.grid.grid-cols-1.justify-items-center
+       (asset-cp config block)
+       (when (img-audio-video? block)
+         [:div.text-xs.opacity-60.mt-1
+          (text-block-title (dissoc config :raw-title?) block)])]
 
       (= :code node-display-type)
       [:div.flex.flex-1.w-full
-       (src-cp (assoc config :block block) {:language (:logseq.property.code/lang block)})]
+       (src-cp (assoc config :code-block block) {:language (:logseq.property.code/lang block)})]
 
       ;; TODO: switched to https://cortexjs.io/mathlive/ for editing
       (= :math node-display-type)
@@ -3162,7 +3177,7 @@
         (cond
           (and advanced-query? (not collapsed?))
           [:div.flex.flex-1.my-1 {:style {:margin-left 42}}
-           (src-cp (assoc config :block query)
+           (src-cp (assoc config :code-block query)
                    {:language "clojure"})]
 
           (and (not advanced-query?) (not collapsed?))
@@ -3616,7 +3631,7 @@
 
 (rum/defc src-cp < rum/static
   [config options]
-  (let [block (:block config)
+  (let [block (or (:code-block config) (:block config))
         container-id (:container-id config)
         *mode-ref (rum/use-ref nil)
         *actions-ref (rum/use-ref nil)]
