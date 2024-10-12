@@ -8,7 +8,6 @@
             [frontend.components.plugins :as plugins]
             [frontend.components.repo :as repo]
             [frontend.components.right-sidebar :as right-sidebar]
-            [frontend.components.select :as select]
             [frontend.components.theme :as theme]
             [frontend.components.dnd :as dnd-component]
             [frontend.components.icon :as icon]
@@ -966,7 +965,6 @@
       (shui-dialog/install-modals)
       (shui-popup/install-popups)
 
-      (select/select-modal)
       (custom-context-menu)
       (plugins/custom-js-installer
        {:t t
