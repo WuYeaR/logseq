@@ -89,8 +89,7 @@
             [promesa.core :as p]
             [reitit.frontend.easy :as rfe]
             [rum.core :as rum]
-            [shadow.loader :as loader]
-            [frontend.storage :as storage]))
+            [shadow.loader :as loader]))
 
 ;; local state
 (defonce *dragging?
@@ -381,11 +380,12 @@
                              (reset! size value))
             :onPointerUp (fn []
                            (when (and @size @*resizing-image?)
-                             (when-let [block-id (:block/uuid config)]
+                             (when-let [block-id (or (:block/uuid config)
+                                                     (some-> config :block (:block/uuid)))]
                                (let [size (bean/->clj @size)]
                                  (editor-handler/resize-image! config block-id metadata full-text size))))
                            (when @*resizing-image?
-                           ;; TODO:​ need a better way to prevent the clicking to edit current block
+                             ;; TODO:​ need a better way to prevent the clicking to edit current block
                              (js/setTimeout #(reset! *resizing-image? false) 200)))
             :onClick (fn [e]
                        (when @*resizing-image? (util/stop e)))}
@@ -605,6 +605,8 @@
              (state/get-left-sidebar-open?))
     (ui-handler/close-left-sidebar!)))
 
+(declare block-title)
+
 (rum/defcs ^:large-vars/cleanup-todo page-inner <
   (rum/local false ::mouse-down?)
   (rum/local false ::hover?)
@@ -664,7 +666,7 @@
       :on-key-up (fn [e] (when (and e (= (.-key e) "Enter") (not meta-click?))
                            (state/clear-edit!)
                            (open-page-ref config page-entity e page-name contents-page?)))}
-     (when show-icon?
+     (when (and show-icon? (not tag?))
        (when-let [icon (icon-component/get-node-icon-cp page-entity {:color? true :not-text-or-page? true})]
          [:span.mr-1
           icon]))
@@ -722,9 +724,7 @@
                                      s (if tag? (str "#" s) s)]
                                  (if (ldb/page? page-entity)
                                    s
-                                   (let [inline-list (gp-mldoc/inline->edn (first (string/split-lines s))
-                                                                           (mldoc/get-default-config (get page-entity :block/format :markdown)))]
-                                     (->elem :span (map-inline config inline-list))))))]
+                                   (block-title config page-entity))))]
           page-component))]]))
 
 (rum/defc popup-preview-impl
@@ -837,21 +837,30 @@
      (->ref id)]))
 
 (rum/defcs page-cp-inner < db-mixins/query rum/reactive
+  {:init (fn [state]
+           (let [page (last (:rum/args state))
+                 *result (atom nil)]
+             (p/let [result (if (e/entity? page)
+                              page
+                              (p/let [page-name (or (:block/uuid page)
+                                                    (when-let [s (:block/name page)]
+                                                      (let [s (string/trim s)
+                                                            s (if (string/starts-with? s db-content/page-ref-special-chars)
+                                                                (common-util/safe-subs s 2)
+                                                                s)]
+                                                        s)))
+                                      query-result (db-async/<get-block (state/get-current-repo) page-name {:children? false})]
+                                (if (e/entity? query-result)
+                                  query-result
+                                  (:block query-result))))]
+               (reset! *result result))
+             (assoc state :*entity *result)))}
   "Component for a page. `page` argument contains :block/name which can be (un)sanitized page name.
    Keys for `config`:
    - `:preview?`: Is this component under preview mode? (If true, `page-preview-trigger` won't be registered to this `page-cp`)"
   [state {:keys [label children preview? disable-preview? show-non-exists-page? tag?] :as config} page]
-  (let [entity (if (e/entity? page)
-                 page
-                 ;; Use uuid when available to uniquely identify case sensitive contexts
-                 (db/get-page (or (:block/uuid page)
-                                  (when-let [s (:block/name page)]
-                                    (let [s (string/trim s)
-                                          s (if (string/starts-with? s db-content/page-ref-special-chars)
-                                              (common-util/safe-subs s 2)
-                                              s)]
-                                      s)))))]
-    (let [entity (when entity (db/sub-block (:db/id entity)))]
+  (when-let [entity' (rum/react (:*entity state))]
+    (let [entity (db/sub-block (:db/id entity'))]
       (cond
         entity
         (if (or (ldb/page? entity) (:block/tags entity))
@@ -1189,7 +1198,7 @@
 
                    (if (and (not (util/mobile?))
                             (not (:preview? config))
-                            (not (:modal/show? @state/state))
+                            (not (shui-dialog/has-modal?))
                             (nil? block-type))
                      (block-reference-preview inner
                                               {:repo repo :config config :id block-id})
@@ -2099,11 +2108,14 @@
 (declare block-content)
 
 (declare src-cp)
-(declare block-title)
 
 (rum/defc ^:large-vars/cleanup-todo text-block-title
-  [config {:block/keys [marker pre-block? properties] :as block}]
-  (let [block-ast-title (:block.temp/ast-title block)
+  [config {:block/keys [format marker pre-block? properties] :as block}]
+  (let [block (if-not (:block.temp/ast-title block)
+                (merge block (block/parse-title-and-body uuid format pre-block?
+                                                         (:block/title block)))
+                block)
+        block-ast-title (:block.temp/ast-title block)
         config (assoc config :block block)
         level (:level config)
         slide? (boolean (:slide? config))
@@ -2216,7 +2228,7 @@
       (text-block-title (dissoc config :raw-title?) block)
 
       (ldb/asset? block)
-      [:div.grid.grid-cols-1.justify-items-center
+      [:div.grid.grid-cols-1.justify-items-start
        (asset-cp config block)
        (when (img-audio-video? block)
          [:div.text-xs.opacity-60.mt-1
@@ -3694,7 +3706,7 @@
                                                                            (.setOption cm "mode" mode)
                                                                            (throw (ex-info "code mode not found"
                                                                                            {:lang lang})))
-                                                                         (storage/set :latest-code-lang lang)
+                                                                         (db/transact! [(ldb/kv :logseq.kv/latest-code-lang lang)])
                                                                          (db-property-handler/set-block-property!
                                                                           (:db/id block) :logseq.property.code/lang lang))))
                                                    {:align :end})))}

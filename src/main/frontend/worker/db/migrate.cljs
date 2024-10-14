@@ -251,6 +251,17 @@
                 (assoc :block/order (db-order/gen-key)))]
         [m]))))
 
+(defn- add-tags-for-typed-display-blocks
+  [conn _search-db]
+  (let [db @conn]
+    (when (ldb/db-based-graph? db)
+      (let [datoms (d/datoms db :avet :logseq.property.node/display-type)]
+        (map
+         (fn [d]
+           (when-let [tag-id (ldb/get-class-ident-by-display-type (:v d))]
+             [:db/add (:e d) :block/tags tag-id]))
+         datoms)))))
+
 (defn- add-addresses-in-kvs-table
   [^Object sqlite-db]
   (let [columns (->> (.exec sqlite-db #js {:sql "SELECT NAME FROM PRAGMA_TABLE_INFO('kvs')"
@@ -328,7 +339,10 @@
    [32 {:properties [:logseq.property.asset/last-visit-page]}]
    [33 {:properties [:logseq.property.pdf/hl-image]}]
    [34 {:properties [:logseq.property.asset/resize-metadata]}]
-   [35 {:fix add-card-view}]])
+   [35 {:fix add-card-view}]
+   [37 {:classes [:logseq.class/Code-block :logseq.class/Quote-block :logseq.class/Math-block]
+        :properties [:logseq.property.node/display-type :logseq.property.code/lang]}]
+   [38 {:fix add-tags-for-typed-display-blocks}]])
 
 (let [max-schema-version (apply max (map first schema-version->updates))]
   (assert (<= db-schema/version max-schema-version))
