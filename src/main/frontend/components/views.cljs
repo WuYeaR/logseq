@@ -1061,7 +1061,7 @@
                        :group-by-page? group-by-page?
                        :ref? true)))))
 
-(rum/defcs card-view < rum/static mixins/container-id
+(rum/defcs gallery-view < rum/static mixins/container-id
   [state config view-entity result]
   (let [config' (assoc config :container-id (:container-id state))]
     [:div.ls-cards
@@ -1155,7 +1155,7 @@
 
        [:div.text-muted-foreground.text-sm
         (pv/property-value view-entity (db/entity :logseq.property.view/type)
-                           (get view-entity :logseq.property.view/type) {})]
+                           (db/entity display-type) {})]
 
        (more-actions columns table)
 
@@ -1167,8 +1167,8 @@
        :logseq.property.view/type.list
        (list-view (:config option) view-entity (:rows table))
 
-       :logseq.property.view/type.card
-       (card-view (:config option) view-entity (:rows table))
+       :logseq.property.view/type.gallery
+       (gallery-view (:config option) view-entity (:rows table))
 
        (table-view table option row-selection add-new-object!))]))
 
