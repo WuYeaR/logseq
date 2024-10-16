@@ -124,6 +124,18 @@
                                   [:db/add id new prop-value]]))))
                 props-to-rename)))))
 
+(defn- rename-classes
+  [classes-to-rename]
+  (fn [conn _search-db]
+    (when (ldb/db-based-graph? @conn)
+      (mapv (fn [[old new]]
+              (merge {:db/id (:db/id (d/entity @conn old))
+                      :db/ident new}
+                     (when-let [new-title (get-in db-class/built-in-classes [new :title])]
+                       {:block/title new-title
+                        :block/name (common-util/page-name-sanity-lc new-title)})))
+            classes-to-rename))))
+
 (defn- update-block-type-many->one
   [conn _search-db]
   (let [db @conn
@@ -257,7 +269,16 @@
   [conn _search-db]
   (let [db @conn]
     (when (ldb/db-based-graph? db)
-      (let [datoms (d/datoms db :avet :logseq.property.node/display-type)]
+      (let [property (d/entity db :logseq.property.node/display-type)
+            ;; fix property
+            _ (when-not (ldb/property? property)
+                (let [fix-tx-data (->>
+                                   (select-keys db-property/built-in-properties [:logseq.property.node/display-type])
+                                   (sqlite-create-graph/build-initial-properties*)
+                                   (map (fn [m]
+                                          (assoc m :db/id (:db/id property)))))]
+                  (d/transact! conn fix-tx-data)))
+            datoms (d/datoms @conn :avet :logseq.property.node/display-type)]
         (map
          (fn [d]
            (when-let [tag-id (ldb/get-class-ident-by-display-type (:v d))]
@@ -341,7 +362,8 @@
         :properties [:logseq.property/ls-type :logseq.property/hl-color :logseq.property/asset
                      :logseq.property.pdf/hl-page :logseq.property.pdf/hl-value
                      :logseq.property/hl-type :logseq.property.pdf/hl-image]
-        :fix add-pdf-annotation-class}]])
+        :fix add-pdf-annotation-class}]
+   [41 {:fix (rename-classes {:logseq.class/pdf-annotation :logseq.class/Pdf-annotation})}]])
 
 (let [max-schema-version (apply max (map first schema-version->updates))]
   (assert (<= db-schema/version max-schema-version))
@@ -398,7 +420,7 @@
               (ldb/transact! conn tx-data' {:db-migrate? true}))
             (println "DB schema migrated to " db-schema/version " from " version-in-db ".")))
         (catch :default e
-          (prn :error "DB migration failed:")
+          (prn :error (str "DB migration failed to migrate to " db-schema/version " from " version-in-db ":"))
           (js/console.error e))))))
 
 ;; Backend migrations
