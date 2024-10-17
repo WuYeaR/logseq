@@ -220,8 +220,6 @@
 
                      :else
                      children)
-          *loading? (:*loading? config)
-          loading? (when *loading? (rum/react *loading?))
           db-based? (config/db-based-graph? repo)]
       [:<>
        (when (and db-based? (or (ldb/class? block) (ldb/property? block)))
@@ -230,11 +228,7 @@
 
        [:div.ml-1
         (cond
-          loading?
-          nil
-
           (and
-           (not loading?)
            (not block?)
            (empty? children) page-e)
           (dummy-block page-e)
@@ -464,7 +458,7 @@
             :on-click (fn [e]
                         (state/pub-event! [:editor/new-property {:block page
                                                                  :target (.-target e)}]))}
-           "Set property")]])
+           "Set node property")]])
       (component-block/block-container {:page-title? true
                                         :hide-title? sidebar?
                                         :hide-children? true
@@ -668,7 +662,8 @@
                     ::page-name page-name'
                     ::loading? *loading?)))}
   [state option]
-  (page-inner (assoc option :*loading? (::loading? state))))
+  (when-not (rum/react (::loading? state))
+    (page-inner option)))
 
 (rum/defcs page-cp
   [state option]
