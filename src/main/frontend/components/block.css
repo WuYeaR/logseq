@@ -874,6 +874,9 @@ html.is-mac {
   opacity: 1;
 }
 
+.positioned-properties {
+  @apply text-sm;
+}
 .positioned-properties.block-right {
   button {
     @apply whitespace-nowrap mr-0.5;
@@ -894,7 +897,7 @@ html.is-mac {
   @apply flex flex-row flex-wrap self-start items-center;
   min-height: 24px;
   max-width: 256px;
-  margin-right: -28px;
+  margin-right: -16px;
 }
 
 .block-tag {
