@@ -101,7 +101,7 @@
         "@capgo/capacitor-navigation-bar": "^6.0.0",
         "@dnd-kit/core": "^6.0.8",
         "@dnd-kit/sortable": "^7.0.2",
-        "@emoji-mart/data": "^1.1.2",
+        "@emoji-mart/data": "^1.2.1",
         "@emoji-mart/react": "^1.1.1",
         "@excalidraw/excalidraw": "0.16.1",
         "@glidejs/glide": "^3.6.0",
