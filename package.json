@@ -118,7 +118,7 @@
         "@sentry/react": "^8.46.0",
         "@sentry/tracing": "^6.18.2",
         "@tabler/icons-react": "^2.47.0",
-        "@tabler/icons-webfont": "^2.47.0",
+        "@tabler/icons-webfont": "^3.26.0",
         "@tippyjs/react": "4.2.5",
         "bignumber.js": "^9.0.2",
         "capacitor-voice-recorder": "^5.0.0",
