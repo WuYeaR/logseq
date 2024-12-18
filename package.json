@@ -132,7 +132,7 @@
         "dompurify": "2.4.0",
         "electron": "28.3.1",
         "electron-dl": "3.3.0",
-        "emoji-mart": "^5.5.2",
+        "emoji-mart": "^5.6.0",
         "fs": "0.0.1-security",
         "fs-extra": "11.2.0",
         "fuse.js": "6.4.6",

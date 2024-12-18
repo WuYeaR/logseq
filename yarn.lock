@@ -2960,10 +2960,10 @@ elliptic@^6.5.3, elliptic@^6.5.4:
     minimalistic-assert "^1.0.1"
     minimalistic-crypto-utils "^1.0.1"
 
-emoji-mart@^5.5.2:
-  version "5.5.2"
-  resolved "https://registry.yarnpkg.com/emoji-mart/-/emoji-mart-5.5.2.tgz#3ddbaf053139cf4aa217650078bc1c50ca8381af"
-  integrity sha512-Sqc/nso4cjxhOwWJsp9xkVm8OF5c+mJLZJFoFfzRuKO+yWiN7K8c96xmtughYb0d/fZ8UC6cLIQ/p4BR6Pv3/A==
+emoji-mart@^5.6.0:
+  version "5.6.0"
+  resolved "https://registry.yarnpkg.com/emoji-mart/-/emoji-mart-5.6.0.tgz#71b3ed0091d3e8c68487b240d9d6d9a73c27f023"
+  integrity sha512-eJp3QRe79pjwa+duv+n7+5YsNhRcMl812EcFVwrnRvYKoNPoQb5qxU8DG6Bgwji0akHdp6D4Ln6tYLG58MFSow==
 
 emoji-regex@^8.0.0:
   version "8.0.0"
