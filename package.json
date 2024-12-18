@@ -171,7 +171,7 @@
         "tailwind-capitalize-first-letter": "^1.0.4",
         "threads": "1.6.5",
         "url": "^0.11.0",
-        "yargs-parser": "20.2.4"
+        "yargs-parser": "21.1.1"
     },
     "resolutions": {
         "pixi-graph-fork/@pixi/app": "6.2.0",
