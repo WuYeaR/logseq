@@ -4,7 +4,7 @@
     "private": true,
     "main": "static/electron.js",
     "devDependencies": {
-        "@axe-core/playwright": "=4.4.4",
+        "@axe-core/playwright": "=4.7.1",
         "@capacitor/cli": "^5.0.0",
         "@playwright/test": "=1.44.0",
         "@tailwindcss/aspect-ratio": "0.4.2",
