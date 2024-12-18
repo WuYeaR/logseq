@@ -562,10 +562,10 @@
   resolved "https://registry.yarnpkg.com/@js-joda/locale_en-us/-/locale_en-us-3.1.1.tgz#c2eab2561aa048f5366046edd313ce94108263c6"
   integrity sha512-EYrs4h0Um/9LqcEwDb0kGTHGaGkJgEO2cj78KKICPz7hsdvJHPOADIkDtjesYInZ1YkNrtE3HopnfETLDBvnWg==
 
-"@js-joda/timezone@2.5.0":
-  version "2.5.0"
-  resolved "https://registry.yarnpkg.com/@js-joda/timezone/-/timezone-2.5.0.tgz#b422ff400c25ae311384239c62724eecee2e442b"
-  integrity sha512-HHFVhGUKIOtITiT+sbQRdYuO5Q+a8FDj/vQSGUSxe6+5w2in5JsavfRsAN2tU/NCdBeFx/6q8evHMtOrXfdn2g==
+"@js-joda/timezone@2.21.1":
+  version "2.21.1"
+  resolved "https://registry.yarnpkg.com/@js-joda/timezone/-/timezone-2.21.1.tgz#c552dbbf5b58a4e861dfb7b43caa2cc3bae852b0"
+  integrity sha512-QOWH24q+6Z0bvYjuiQ5rNlJMWTbogsQkgL1EV35n0jy9msh2I9bgxwryGAFE/N6w8FWQJR+8p4/mIT7+nAb43g==
 
 "@logseq/capacitor-file-sync@5.0.2":
   version "5.0.2"
