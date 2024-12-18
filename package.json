@@ -30,7 +30,7 @@
         "postcss-functions": "^4.0.2",
         "postcss-import": "15.0.0",
         "postcss-import-ext-glob": "2.0.1",
-        "postcss-nested": "6.0.0",
+        "postcss-nested": "7.0.2",
         "purgecss": "4.0.2",
         "shadow-cljs": "2.26.0",
         "stylelint": "^13.8.0",
