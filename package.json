@@ -140,7 +140,7 @@
         "graphology": "0.20.0",
         "html2canvas": "^1.4.1",
         "ignore": "5.1.8",
-        "inter-ui": "^3.19.3",
+        "inter-ui": "^4.1.0",
         "interactjs": "^1.10.27",
         "jszip": "3.8.0",
         "katex": "^0.16.10",
