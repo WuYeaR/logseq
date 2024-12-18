@@ -28,7 +28,7 @@
         "postcss": "^8.4.47",
         "postcss-cli": "10.0.0",
         "postcss-functions": "^4.0.2",
-        "postcss-import": "15.0.0",
+        "postcss-import": "16.1.0",
         "postcss-import-ext-glob": "2.0.1",
         "postcss-nested": "6.0.0",
         "purgecss": "4.0.2",
