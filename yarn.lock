@@ -6337,17 +6337,17 @@ pixi.js@6.2.0:
     "@pixi/ticker" "6.2.0"
     "@pixi/utils" "6.2.0"
 
-playwright-core@1.38.1:
-  version "1.38.1"
-  resolved "https://registry.yarnpkg.com/playwright-core/-/playwright-core-1.38.1.tgz#75a3c470aa9576b7d7c4e274de3d79977448ba08"
-  integrity sha512-tQqNFUKa3OfMf4b2jQ7aGLB8o9bS3bOY0yMEtldtC2+spf8QXG9zvXLTXUeRsoNuxEYMgLYR+NXfAa1rjKRcrg==
-
 playwright-core@1.44.0:
   version "1.44.0"
   resolved "https://registry.yarnpkg.com/playwright-core/-/playwright-core-1.44.0.tgz#316c4f0bca0551ffb88b6eb1c97bc0d2d861b0d5"
   integrity sha512-ZTbkNpFfYcGWohvTTl+xewITm7EOuqIqex0c7dNZ+aXsbrLj0qI8XlGKfPpipjm0Wny/4Lt4CJsWJk1stVS5qQ==
 
-playwright@1.44.0, playwright@=1.44.0:
+playwright-core@1.49.1:
+  version "1.49.1"
+  resolved "https://registry.yarnpkg.com/playwright-core/-/playwright-core-1.49.1.tgz#32c62f046e950f586ff9e35ed490a424f2248015"
+  integrity sha512-BzmpVcs4kE2CH15rWfzpjzVGhWERJfmnXmniSyKeRZUs9Ws65m+RGIi7mjJK/euCegfn3i7jvqWeWyHe9y3Vgg==
+
+playwright@1.44.0:
   version "1.44.0"
   resolved "https://registry.yarnpkg.com/playwright/-/playwright-1.44.0.tgz#22894e9b69087f6beb639249323d80fe2b5087ff"
   integrity sha512-F9b3GUCLQ3Nffrfb6dunPOkE5Mh68tR7zN32L4jCk4FjQamgesGay7/dAAe1WaMEGV04DkdJfcJzjoCKygUaRQ==
@@ -6356,12 +6356,12 @@ playwright@1.44.0, playwright@=1.44.0:
   optionalDependencies:
     fsevents "2.3.2"
 
-"playwright@>= 1.0.0":
-  version "1.38.1"
-  resolved "https://registry.yarnpkg.com/playwright/-/playwright-1.38.1.tgz#82ecd9bc4f4f64dbeee8a11c31793748e2528130"
-  integrity sha512-oRMSJmZrOu1FP5iu3UrCx8JEFRIMxLDM0c/3o4bpzU5Tz97BypefWf7TuTNPWeCe279TPal5RtPPZ+9lW/Qkow==
+playwright@=1.49.1, "playwright@>= 1.0.0":
+  version "1.49.1"
+  resolved "https://registry.yarnpkg.com/playwright/-/playwright-1.49.1.tgz#830266dbca3008022afa7b4783565db9944ded7c"
+  integrity sha512-VYL8zLoNTBxVOrJBbDuRgDWa3i+mfQgDTrL8Ah9QXZ7ax4Dsj0MSq5bYgytRnDVVe+njoKnfsYkH3HzqVj5UZA==
   dependencies:
-    playwright-core "1.38.1"
+    playwright-core "1.49.1"
   optionalDependencies:
     fsevents "2.3.2"
 
