@@ -335,10 +335,10 @@
   resolved "https://registry.yarnpkg.com/@capawesome/capacitor-background-task/-/capacitor-background-task-5.0.0.tgz#eb985131065df59f95ffa1e9ef3abf0f3573a35f"
   integrity sha512-puZ/MaNNlIMmwojuMX5Z5rqWJFHjvpdgMB+xGe/QXG+IMrcY5eMtR3l/NLGtbH8izwid1dAsxzBACX5RGHdVzA==
 
-"@capgo/capacitor-navigation-bar@^6.0.0":
-  version "6.0.6"
-  resolved "https://registry.yarnpkg.com/@capgo/capacitor-navigation-bar/-/capacitor-navigation-bar-6.0.6.tgz#e2c8d346298abf470d5a4583059fca34d4d4ff94"
-  integrity sha512-X0w0BFB07vyb2BipWaok8itPgn6inR5zuZIJgZGhsJXYmmyVAwsTbSRZZluIrDbMzd3LHD4bfzbzFzU02tfG3g==
+"@capgo/capacitor-navigation-bar@^6.0.12":
+  version "6.0.12"
+  resolved "https://registry.yarnpkg.com/@capgo/capacitor-navigation-bar/-/capacitor-navigation-bar-6.0.12.tgz#68c842efedf7cfda53efbd40d0ef35dbf4965aef"
+  integrity sha512-egx6SEk/oiHRL6gEcQfn1esDlT3bBnIb5avfR2ad3c2kzWl3CvVtWQkZMRG27OW1kCiydXFLve6ecQcMU1bJ9Q==
 
 "@colors/colors@1.5.0":
   version "1.5.0"
