@@ -964,13 +964,12 @@
   dependencies:
     defer-to-connect "^2.0.0"
 
-"@tabler/icons-react@^2.47.0":
-  version "2.47.0"
-  resolved "https://registry.yarnpkg.com/@tabler/icons-react/-/icons-react-2.47.0.tgz#b704e7ae98f95be8bd6e938b4b2e84cd20b0cf31"
-  integrity sha512-iqly2FvCF/qUbgmvS8E40rVeYY7laltc5GUjRxQj59DuX0x/6CpKHTXt86YlI2whg4czvd/c8Ce8YR08uEku0g==
+"@tabler/icons-react@^3.26.0":
+  version "3.26.0"
+  resolved "https://registry.yarnpkg.com/@tabler/icons-react/-/icons-react-3.26.0.tgz#5db95a886f3766aefea6d94b729438dd0a8dd784"
+  integrity sha512-t18Zmu1ROktB7M8hWQ6vJw+mNpI/LPk5PPxLuE+kNB+4Zzf38GfETL8VF98inhzcfHohsggdROzMzwSAfjcAxw==
   dependencies:
-    "@tabler/icons" "2.47.0"
-    prop-types "^15.7.2"
+    "@tabler/icons" "3.26.0"
 
 "@tabler/icons-webfont@^2.47.0":
   version "2.47.0"
@@ -983,6 +982,11 @@
   version "2.47.0"
   resolved "https://registry.yarnpkg.com/@tabler/icons/-/icons-2.47.0.tgz#c41c680d1947e3ab2d60af3febc4132287c60596"
   integrity sha512-4w5evLh+7FUUiA1GucvGj2ReX2TvOjEr4ejXdwL/bsjoSkof6r1gQmzqI+VHrE2CpJpB3al7bCTulOkFa/RcyA==
+
+"@tabler/icons@3.26.0":
+  version "3.26.0"
+  resolved "https://registry.yarnpkg.com/@tabler/icons/-/icons-3.26.0.tgz#7a23b2a99abda32e3b4cf00ce46dddaa5daa1923"
+  integrity sha512-oO3D4ss+DxzxqU1aDy0f1HmToyrO0gcQWIMpzHAfV1quPUx0BZYvNm5xz1DQb4DxNm/+xNvbBGLJy4pzTLYWag==
 
 "@tailwindcss/aspect-ratio@0.4.2":
   version "0.4.2"
