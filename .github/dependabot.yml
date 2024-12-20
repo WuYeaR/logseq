@@ -10,4 +10,3 @@ updates:
     schedule:
       interval: "weekly"
     target-branch: "feat/db"
-    open-pull-requests-limit: 100
