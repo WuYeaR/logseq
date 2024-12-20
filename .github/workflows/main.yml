@@ -1,5 +1,3 @@
-# This is the main desktop application release workflow for both nightly and beta/stable releases.
-
 name: Build-Desktop-Release
 
 on:
@@ -41,19 +39,25 @@ on:
 
 env:
   CLOJURE_VERSION: '1.11.1.1413'
-  NODE_VERSION: '20'
+  NODE_VERSION: '18'
   JAVA_VERSION: '11'
 
 jobs:
+  sync:
+      runs-on: ubuntu-latest
+      steps:
+        - uses: tgymnich/fork-sync@v1.8
+          with:
+            owner: logseq
+            base: feat/db
+            head: feat/db
+            token: ${{ github.token }}
+            ignore_fail: true
+            
   compile-cljs:
     runs-on: ubuntu-20.04
+    needs: [ sync ]
     steps:
-      - name: Check build options
-        if: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.build-target == 'nightly' || github.event.inputs.build-target == 'beta') && github.event.inputs.git-ref != 'master' }}
-        run: |
-          echo "::error title=CheckFail::Nightly and Beta Release MUST be built from master"
-          exit 1
-
       - name: Check out Git repository
         uses: actions/checkout@v3
         with:
@@ -273,58 +277,5 @@ jobs:
             ./*.dmg
             ./*.exe
             ./*.msi
-            ./*.AppImage
-            ./*.apk
-
-  release:
-    # NOTE: For now, we only have beta channel to be released on Github
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.build-target == 'beta' }}
-    needs: [ build-windows ]
-    runs-on: ubuntu-20.04
-    steps:
-      - name: Download The Windows Artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: logseq-win64-builds
-          path: ./
-
-      - name: List files
-        run: ls -rl
-
-      - name: Retrieve tag version
-        id: ref
-        run: |
-          pkgver=$(cat VERSION)
-          echo "version=$pkgver" >> $GITHUB_OUTPUT
-
-      - name: Fix .nupkg name in RELEASES file
-        run: |
-          sed -i "s/Logseq-.*.nupkg/Logseq-win-x64-${{ steps.ref.outputs.version }}-full.nupkg/g" RELEASES
-
-      - name: Generate SHA256 checksums
-        run: |
-          sha256sum *-win-* >> SHA256SUMS.txt
-          sha256sum RELEASES >> SHA256SUMS.txt
-          cat SHA256SUMS.txt
-
-      - name: Create Release Draft
-        uses: softprops/action-gh-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: ${{ steps.ref.outputs.version }}
-          name: Desktop/Android APP ${{ steps.ref.outputs.version }} (Beta Testing)
-          body: "TODO: Fill this changelog. Sorry for the inconvenience!"
-          draft: ${{ github.event.inputs.is-draft }}
-          prerelease: ${{ github.event.inputs.is-pre-release }}
-          files: |
-            ./VERSION
-            ./SHA256SUMS.txt
-            ./*.zip
-            ./*.dmg
-            ./*.exe
-            ./*.msi
-            ./*.nupkg
-            ./RELEASES
             ./*.AppImage
             ./*.apk
