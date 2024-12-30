@@ -1,22 +1,26 @@
 (ns frontend.worker.db.migrate
   "Handles SQLite and datascript migrations for DB graphs"
-  (:require [datascript.core :as d]
-            [logseq.db.sqlite.create-graph :as sqlite-create-graph]
-            [logseq.db.frontend.property :as db-property]
-            [logseq.db.frontend.class :as db-class]
-            [logseq.db :as ldb]
-            [logseq.db.frontend.schema :as db-schema]
+  (:require [cljs-bean.core :as bean]
+            [cljs-time.coerce :as tc]
+            [clojure.string :as string]
+            [clojure.walk :as walk]
+            [datascript.core :as d]
+            [datascript.impl.entity :as de]
             [frontend.worker.search :as search]
-            [cljs-bean.core :as bean]
-            [logseq.db.sqlite.util :as sqlite-util]
             [logseq.common.config :as common-config]
             [logseq.common.util :as common-util]
-            [logseq.db.frontend.property.build :as db-property-build]
-            [logseq.db.frontend.order :as db-order]
+            [logseq.common.util.date-time :as date-time-util]
+            [logseq.common.util.page-ref :as page-ref]
             [logseq.common.uuid :as common-uuid]
-            [clojure.string :as string]
+            [logseq.db :as ldb]
+            [logseq.db.frontend.class :as db-class]
             [logseq.db.frontend.content :as db-content]
-            [logseq.common.util.page-ref :as page-ref]))
+            [logseq.db.frontend.order :as db-order]
+            [logseq.db.frontend.property :as db-property]
+            [logseq.db.frontend.property.build :as db-property-build]
+            [logseq.db.frontend.schema :as db-schema]
+            [logseq.db.sqlite.create-graph :as sqlite-create-graph]
+            [logseq.db.sqlite.util :as sqlite-util]))
 
 ;; TODO: fixes/rollback
 ;; Frontend migrations
@@ -433,6 +437,7 @@
                                       "property" :logseq.class/Property
                                       "journal" :logseq.class/Journal
                                       "whiteboard" :logseq.class/Whiteboard
+                                      "asset" :logseq.class/Asset
                                       "closed value" nil
                                       (throw (ex-info "unsupported block/type" {:type v})))]
                             (cond->
@@ -445,6 +450,30 @@
      tx-data
      (when block-type-entity
        [[:db/retractEntity (:db/id block-type-entity)]]))))
+
+(defn- add-scheduled-to-task
+  [conn _search-db]
+  (let [db @conn]
+    (when (ldb/db-based-graph? db)
+      (let [e (d/entity db :logseq.class/Task)
+            eid (:db/id e)]
+        [[:db/add eid :logseq.property.class/properties :logseq.task/scheduled]]))))
+
+(defn- update-deadline-to-datetime
+  [conn _search-db]
+  (let [db @conn]
+    (when (ldb/db-based-graph? db)
+      (let [e (d/entity db :logseq.task/deadline)
+            datoms (d/datoms db :avet :logseq.task/deadline)]
+        (concat
+         [[:db/retract (:db/id e) :db/valueType]]
+         (map
+          (fn [d]
+            (if-let [day (:block/journal-day (d/entity db (:v d)))]
+              (let [v' (tc/to-long (date-time-util/int->local-date day))]
+                [:db/add (:e d) :logseq.task/deadline v'])
+              [:db/retract (:e d) :logseq.task/deadline]))
+          datoms))))))
 
 (defn- deprecate-logseq-user-ns
   [conn _search-db]
@@ -546,12 +575,50 @@
    [50 {:properties [:logseq.property.user/name :logseq.property.user/email :logseq.property.user/avatar]
         :fix deprecate-logseq-user-ns}]
    [51 {:classes [:logseq.class/Property :logseq.class/Tag :logseq.class/Page :logseq.class/Whiteboard]}]
-   [52 {:fix replace-block-type-with-tags}]])
+   [52 {:fix replace-block-type-with-tags}]
+   [53 {:properties [:logseq.task/scheduled :logseq.task/recur-frequency :logseq.task/recur-unit :logseq.task/repeated?
+                     :logseq.task/scheduled-on-property :logseq.task/recur-status-property]
+        :fix add-scheduled-to-task}]
+   [54 {:properties [:logseq.property/choice-checkbox-state :logseq.property/checkbox-display-properties]}]
+   [55 {:fix update-deadline-to-datetime}]])
 
 (let [max-schema-version (apply max (map first schema-version->updates))]
   (assert (<= db-schema/version max-schema-version))
   (when (< db-schema/version max-schema-version)
     (js/console.warn (str "Current db schema-version is " db-schema/version ", max available schema-version is " max-schema-version))))
+
+(defn- ensure-built-in-data-exists!
+  [conn]
+  (let [*uuids (atom {})
+        data (->> (sqlite-create-graph/build-db-initial-data "")
+                  (keep (fn [data]
+                          (if (map? data)
+                            (cond
+                              (= (:db/ident data) :logseq.kv/schema-version)
+                              nil
+
+                              (:db/ident data)
+                              data
+
+                              (:block/name data)
+                              (if-let [page (ldb/get-page @conn (:block/name data))]
+                                (do
+                                  (swap! *uuids assoc (:block/uuid data) (:block/uuid page))
+                                  (assoc data :block/uuid (:block/uuid page)))
+                                data)
+
+                              :else
+                              data)
+                            data))))
+        ;; using existing page's uuid
+        data' (walk/postwalk
+               (fn [f]
+                 (if (and (vector? f) (= :block/uuid (first f)) (@*uuids (second f)))
+                   [:block/uuid (@*uuids (second f))]
+                   f))
+               data)]
+    (d/transact! conn data' {:fix-db? true
+                             :db-migrate? true})))
 
 (defn- upgrade-version!
   [conn search-db db-based? version {:keys [properties classes fix]}]
@@ -584,6 +651,73 @@
     (ldb/transact! conn tx-data' {:db-migrate? true})
     (println "DB schema migrated to" version)))
 
+(defn fix-path-refs!
+  [conn]
+  (let [data (keep
+              (fn [d]
+                (when (not (de/entity? (d/entity @conn (:v d))))
+                  [:db/retract (:e d) (:a d) (:v d)]))
+              (d/datoms @conn :avet :block/path-refs))]
+    (when (seq data)
+      (ldb/transact! conn data {:fix-db? true
+                                :db-migrate? true}))))
+
+(defn fix-missing-title!
+  [conn]
+  (let [data (->>
+              (mapcat
+               (fn [d]
+                 (let [entity (d/entity @conn (:e d))]
+                   [(when-not (:block/title entity)
+                      [:db/add (:e d) :block/title (:v d)])
+                    (when-not (:block/uuid entity)
+                      [:db/add (:e d) :block/uuid (d/squuid)])
+                    (when-not (:block/format entity)
+                      [:db/add (:e d) :block/format :markdown])]))
+               (d/datoms @conn :avet :block/name))
+              (remove nil?))]
+    (when (seq data)
+      (ldb/transact! conn data {:fix-db? true
+                                :db-migrate? true}))))
+
+(defn fix-block-timestamps!
+  [conn]
+  (let [data (map
+              (fn [d]
+                (let [entity (d/entity @conn (:e d))]
+                  (when (or (nil? (:block/created-at entity))
+                            (nil? (:block/updated-at entity)))
+                    (-> (select-keys entity [:db/id :block/created-at :block/updated-at])
+                        sqlite-util/block-with-timestamps))))
+              (d/datoms @conn :avet :block/uuid))]
+    (when (seq data)
+      (ldb/transact! conn data {:fix-db? true
+                                :db-migrate? true}))))
+
+(defn fix-properties!
+  [conn]
+  (let [schema (:schema @conn)
+        wrong-properties (filter (fn [[k v]]
+                                   (and (int? k) (not (qualified-ident? v)))) schema)
+        data (map (fn [[k _v]]
+                    [:db/retract k :db/valueType]) wrong-properties)]
+    (when (seq data)
+      (ldb/transact! conn data {:fix-db? true
+                                :db-migrate? true})
+      (d/reset-schema! conn (apply dissoc schema (keys wrong-properties))))))
+
+(defn fix-missing-page-tag!
+  [conn]
+  (let [data (keep
+              (fn [d]
+                (let [entity (d/entity @conn (:e d))]
+                  (when-not (:block/tags entity)
+                    [:db/add (:e d) :block/tags :logseq.class/Page])))
+              (d/datoms @conn :avet :block/name))]
+    (when (seq data)
+      (ldb/transact! conn data {:fix-db? true
+                                :db-migrate? true}))))
+
 (defn migrate
   "Migrate 'frontend' datascript schema and data. To add a new migration,
   add an entry to schema-version->updates and bump db-schema/version"
@@ -606,13 +740,28 @@
                                 (when (and (< version-in-db v) (<= v db-schema/version))
                                   [v updates]))
                               schema-version->updates)]
+            (fix-path-refs! conn)
+            (fix-missing-title! conn)
+            (fix-properties! conn)
+            (fix-block-timestamps! conn)
             (println "DB schema migrated from" version-in-db)
             (doseq [[v m] updates]
-              (upgrade-version! conn search-db db-based? v m)))
+              (upgrade-version! conn search-db db-based? v m))
+            (ensure-built-in-data-exists! conn)
+            (fix-missing-page-tag! conn))
           (catch :default e
             (prn :error (str "DB migration failed to migrate to " db-schema/version " from " version-in-db ":"))
             (js/console.error e)
             (throw e)))))))
+
+(defn fix-db!
+  [conn]
+  (ensure-built-in-data-exists! conn)
+  (fix-path-refs! conn)
+  (fix-missing-title! conn)
+  (fix-properties! conn)
+  (fix-block-timestamps! conn)
+  (fix-missing-page-tag! conn))
 
 ;; Backend migrations
 ;; ==================
