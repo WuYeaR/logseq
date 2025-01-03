@@ -89,7 +89,8 @@
             [promesa.core :as p]
             [reitit.frontend.easy :as rfe]
             [rum.core :as rum]
-            [shadow.loader :as loader]))
+            [shadow.loader :as loader]
+            [clojure.set :as set]))
 
 ;; local state
 (defonce *dragging?
@@ -2630,7 +2631,7 @@
            (db-property-handler/delete-property-value! (:db/id block) :block/tags (:db/id tag)))}
         (ui/icon "x" {:size 14
                       :style {:margin-top 1}})]
-       [:a.hash-symbol {:style {:margin-left 5}}
+       [:a.hash-symbol.select-none {:style {:margin-left 5}}
         "#"])
      (page-cp (assoc config
                      :disable-preview? true
@@ -2642,12 +2643,15 @@
   "Tags without inline or hidden tags"
   [config block]
   (when (:block/raw-title block)
-    (let [block-tags (->>
+    (let [hidden-internal-tags (cond-> ldb/internal-tags
+                                 (:show-tag-and-property-classes? config)
+                                 (set/difference #{:logseq.class/Tag :logseq.class/Property}))
+          block-tags (->>
                       (:block/tags block)
                       (remove (fn [t]
                                 (or (ldb/inline-tag? (:block/raw-title block) t)
                                     (:logseq.property.class/hide-from-node t)
-                                    (contains? ldb/internal-tags (:db/ident t))))))
+                                    (contains? hidden-internal-tags (:db/ident t))))))
           popup-opts {:align :end
                       :content-props {:on-click (fn [] (shui/popup-hide!))
                                       :class "w-60"}}
@@ -4130,7 +4134,7 @@
     (when (seq blocks)
       [:div.blocks-container.flex-1
        {:class (when doc-mode? "document-mode")
-        :container-id (:container-id state)}
+        :containerid (:container-id state)}
        (block-list (assoc config :container-id (:container-id state))
                    blocks)])))
 

@@ -158,6 +158,20 @@
                                  (remove ldb/property?))]
     (or (seq selected-blocks) [block])))
 
+(defn <set-class-as-property!
+  [repo property]
+  (db/transact! repo
+                [{:db/id (:db/id property)
+                  :db/ident (:db/ident property)
+                  :db/cardinality :db.cardinality/one
+                  :db/valueType :db.type/ref
+                  :db/index true
+                  :block/tags :logseq.class/Property
+                  :block/schema (assoc (:block/schema property)
+                                       :type :node)
+                  :property/schema.classes (:db/id property)}]
+                {:outliner-op :save-block}))
+
 (defn <add-property!
   "If a class and in a class schema context, add the property to its schema.
   Otherwise, add a block's property and its value"
@@ -173,7 +187,10 @@
      (assert (qualified-keyword? property-id) "property to add must be a keyword")
      (p/do!
       (if (and class? class-schema?)
-        (db-property-handler/class-add-property! (:db/id block) property-id)
+        (p/do!
+         (when (ldb/class? property)
+           (<set-class-as-property! repo property))
+         (db-property-handler/class-add-property! (:db/id block) property-id))
         (let [block-ids (map :block/uuid blocks)]
           (if (and (db-property-type/all-ref-property-types (get-in property [:block/schema :type]))
                    (string? property-value))
@@ -365,19 +382,20 @@
 
 (defn- human-date-label
   [date]
-  (let [today (t/today)]
+  (let [today (t/today)
+        today-y (t/year today)
+        today-m (t/month today)
+        today-d (t/day today)
+        same-day? (fn [date]
+                    (and (= today-y (t/year date)) (= today-m (t/month date)) (= today-d (t/day date))))]
     (cond
-      (and (or (t/after? date today)
-               (t/equal? date today))
-           (t/before? date (t/plus today (t/days 1))))
+      (same-day? date)
       "Today"
-      (and (or (t/equal? date (t/plus today (t/days 1)))
-               (t/after? date (t/plus today (t/days 1))))
-           (t/before? date (t/plus today (t/days 2))))
+      (let [tomorrow (t/minus date (t/days 1))]
+        (same-day? tomorrow))
       "Tomorrow"
-      (and (or (t/equal? date (t/minus today (t/days 1)))
-               (t/after? date (t/minus today (t/days 1))))
-           (t/before? date today))
+      (let [yesterday (t/plus date (t/days 1))]
+        (same-day? yesterday))
       "Yesterday"
       :else
       nil)))

@@ -429,7 +429,6 @@
         ;; don't have :block/type indexed
         datoms (->> (d/datoms db :eavt)
                     (filter (fn [d] (= :block/type (:a d)))))
-        journal-entity (d/entity db :logseq.class/Journal)
         tx-data (mapcat (fn [{:keys [e _a v]}]
                           (let [tag (case v
                                       "page" :logseq.class/Page
@@ -445,8 +444,6 @@
                               (some? tag)
                               (conj [:db/add e :block/tags tag])))) datoms)]
     (concat
-     ;; set journal's tag to `#Page`
-     [[:db/add (:db/id journal-entity) :block/tags :logseq.class/Page]]
      tx-data
      (when block-type-entity
        [[:db/retractEntity (:db/id block-type-entity)]]))))
@@ -466,7 +463,9 @@
       (let [e (d/entity db :logseq.task/deadline)
             datoms (d/datoms db :avet :logseq.task/deadline)]
         (concat
-         [[:db/retract (:db/id e) :db/valueType]]
+         [[:db/retract (:db/id e) :db/valueType]
+          {:db/id (:db/id e)
+           :block/schema (assoc (:block/schema e) :type :datetime)}]
          (map
           (fn [d]
             (if-let [day (:block/journal-day (d/entity db (:v d)))]
@@ -597,24 +596,40 @@
                               (= (:db/ident data) :logseq.kv/schema-version)
                               nil
 
-                              (:db/ident data)
-                              data
+                              (:file/path data)
+                              (if-let [block (d/entity @conn [:file/path (:file/path data)])]
+                                (let [existing-data (assoc (into {} block) :db/id (:db/id block))]
+                                  (merge data existing-data))
+                                data)
 
-                              (:block/name data)
-                              (if-let [page (ldb/get-page @conn (:block/name data))]
+                              (:block/uuid data)
+                              (if-let [block (d/entity @conn [:block/uuid (:block/uuid data)])]
                                 (do
-                                  (swap! *uuids assoc (:block/uuid data) (:block/uuid page))
-                                  (assoc data :block/uuid (:block/uuid page)))
+                                  (swap! *uuids assoc (:block/uuid data) (:block/uuid block))
+                                  (let [existing-data (assoc (into {} block) :db/id (:db/id block))]
+                                    (reduce
+                                     (fn [data [k existing-value]]
+                                       (update data k
+                                               (fn [v]
+                                                 (if (and (coll? v) (not (map? v)))
+                                                   (concat v (if (coll? existing-value) existing-value [existing-value]))
+                                                   (if (some? existing-value) existing-value v)))))
+                                     data
+                                     existing-data)))
                                 data)
 
                               :else
                               data)
                             data))))
         ;; using existing page's uuid
-        data' (walk/postwalk
+        data' (walk/prewalk
                (fn [f]
-                 (if (and (vector? f) (= :block/uuid (first f)) (@*uuids (second f)))
+                 (cond
+                   (and (de/entity? f) (:block/uuid f))
+                   (or (:db/ident f) [:block/uuid (:block/uuid f)])
+                   (and (vector? f) (= :block/uuid (first f)) (@*uuids (second f)))
                    [:block/uuid (@*uuids (second f))]
+                   :else
                    f))
                data)]
     (d/transact! conn data' {:fix-db? true

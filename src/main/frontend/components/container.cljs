@@ -144,8 +144,9 @@
                           (util/stop e))}
        (ldb/object? page)
        (assoc :title (block-handler/block-unique-title page)))
-     [:span.page-icon icon]
-     [:span.page-title {:class (when untitled? "opacity-50")
+     [:span.page-icon {:key "page-icon"} icon]
+     [:span.page-title {:key "title"
+                        :class (when untitled? "opacity-50")
                         :style {:display "ruby"}}
       (cond
         (not (db/page? page))
@@ -159,7 +160,8 @@
 
      ;; dots trigger
      (shui/button
-      {:size :sm
+      {:key "more actions"
+       :size :sm
        :variant :ghost
        :class "absolute !bg-transparent right-0 top-0 px-1.5 scale-75 opacity-40 hidden group-hover:block hover:opacity-80 active:opacity-100"
        :on-click #(do
@@ -370,7 +372,7 @@
           :title (block-handler/block-unique-title page)
           :draggable true
           :on-drag-start (fn [event] (editor-handler/block->data-transfer! (:block/name page) event true))
-          :data-ref name}
+          :data-ref (str name)}
          (page-name page (icon/get-node-icon-cp page {:size 16}) true)])])))
 
 (defn get-default-home-if-valid
@@ -378,7 +380,7 @@
   (when-let [default-home (state/get-default-home)]
     (let [page (:page default-home)
           page (when (and (string? page)
-                          (not (string/blank? page)))
+                       (not (string/blank? page)))
                  (db/get-page page))]
       (if page
         default-home
