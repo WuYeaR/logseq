@@ -17,7 +17,7 @@
 (def nil-db-ident-entities
   "No such entities with these :db/ident, but `(d/entity <db> <ident>)` has been called somewhere."
   #{:block/tx-id :block/warning :block/pre-block? :block/uuid :block/scheduled
-    :block/deadline :block/journal-day :block/format :block/level :block/heading-level
+    :block/deadline :block/journal-day :block/level :block/heading-level
     :block/type :block/name :block/marker :block/_refs
 
     :block.temp/ast-title :block.temp/top? :block.temp/bottom? :block.temp/search?
@@ -55,6 +55,7 @@
 (def ^:private *reset-cache-background-task-running?
   ;; missionary is not compatible with nbb, so entity-memoized is disabled in nbb
   (delay
+    ;; FIXME: Correct dependency ordering instead of resolve workaround
     #?(:org.babashka/nbb false
        :cljs (when-let [f (resolve 'frontend.common.missionary/background-task-running?)]
                (f :logseq.db.frontend.entity-plus/reset-immutable-entities-cache!)))))
@@ -96,6 +97,7 @@
          (let [result (lookup-entity e k default-value)
                refs (:block/refs e)
                result' (if (and (string? result) refs)
+                         ;; FIXME: Correct namespace dependencies instead of resolve workaround
                          ((resolve 'logseq.db.frontend.content/id-ref->title-ref) result refs search?)
                          result)]
            (or result' default-value)))))))

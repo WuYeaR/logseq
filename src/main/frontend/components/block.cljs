@@ -4,6 +4,7 @@
   (:require ["/frontend/utils" :as utils]
             [cljs-bean.core :as bean]
             [cljs.core.match :refer [match]]
+            [clojure.set :as set]
             [clojure.string :as string]
             [datascript.core :as d]
             [datascript.impl.entity :as e]
@@ -64,6 +65,7 @@
             [frontend.template :as template]
             [frontend.ui :as ui]
             [frontend.util :as util]
+            [frontend.util.file-based.clock :as clock]
             [frontend.util.file-based.drawer :as drawer]
             [frontend.util.text :as text-util]
             [goog.dom :as gdom]
@@ -89,8 +91,7 @@
             [promesa.core :as p]
             [reitit.frontend.easy :as rfe]
             [rum.core :as rum]
-            [shadow.loader :as loader]
-            [clojure.set :as set]))
+            [shadow.loader :as loader]))
 
 ;; local state
 (defonce *dragging?
@@ -1336,7 +1337,7 @@
   [config metadata s full-text]
   (let [media-formats (set (map name config/media-formats))
         metadata-show (:show (common-util/safe-read-map-string metadata))
-        format (get-in config [:block :block/format])]
+        format (get-in config [:block :block/format] :markdown)]
     (or
      (and
       (= :org format)
@@ -1474,7 +1475,7 @@
                            id label*)))
 
       ["Page_ref" page]
-      (let [format (get-in config [:block :block/format])]
+      (let [format (get-in config [:block :block/format] :markdown)]
         (if (and (= format :org)
                  (show-link? config nil page page)
                  (not (contains? #{"pdf" "mp4" "ogg" "webm"} (util/get-file-ext page))))
@@ -1495,7 +1496,7 @@
             [protocol path] (or (and (= "Complex" (first url)) url)
                                 (and (= "File" (first url)) ["file" (second url)]))]
         (cond
-          (and (= (get-in config [:block :block/format]) :org)
+          (and (= (get-in config [:block :block/format] :markdown) :org)
                (= "Complex" protocol)
                (= (string/lower-case (:protocol path)) "id")
                (string? (:link path))
@@ -2195,7 +2196,8 @@
 
 (rum/defc ^:large-vars/cleanup-todo text-block-title
   [config {:block/keys [format marker pre-block? properties] :as block}]
-  (let [block (if-not (:block.temp/ast-title block)
+  (let [format (or format :markdown)
+        block (if-not (:block.temp/ast-title block)
                 (merge block (block/parse-title-and-body uuid format pre-block?
                                                          (:block/title block)))
                 block)
@@ -2405,7 +2407,7 @@
             (rum/with-key elem (str (random-uuid)))))
 
         :else
-        (inline-text config (:block/format block) (str v)))]]))
+        (inline-text config (get block :block/format :markdown) (str v)))]]))
 
 (rum/defc properties-cp
   [config {:block/keys [pre-block?] :as block}]
@@ -2709,6 +2711,7 @@
          (for [pid properties]
            (let [property (db/entity pid)]
              [:div.flex.flex-row.items-center.gap-1
+              {:key (str pid)}
               [:div.flex.flex-row.items-center
                (property-component/property-key-cp block property opts)
                [:div.select-none ":"]]
@@ -2717,13 +2720,60 @@
          {:class (name position)}
          (for [pid properties]
            (when-let [property (db/entity pid)]
-             (pv/property-value block property (assoc opts :show-tooltip? true))))]))))
+             (rum/with-key
+               (pv/property-value block property (assoc opts :show-tooltip? true))
+               (str pid))))]))))
+
+(rum/defc status-history-cp
+  [status-history]
+  (let [[sort-desc? set-sort-desc!] (rum/use-state true)]
+    [:div.p-2.text-muted-foreground.text-sm.max-h-96
+     [:div.font-medium.mb-2.flex.flex-row.gap-2.items-center
+      [:div "Status history"]
+      (shui/button-ghost-icon (if sort-desc? :arrow-down :arrow-up)
+                              {:title "Sort order"
+                               :class "text-muted-foreground !h-4 !w-4"
+                               :icon-props {:size 14}
+                               :on-click #(set-sort-desc! (not sort-desc?))})]
+     [:div.flex.flex-col.gap-1
+      (for [item (if sort-desc? (reverse status-history) status-history)]
+        (let [status (:logseq.property.history/ref-value item)]
+          [:div.flex.flex-row.gap-1.items-center.text-sm.justify-between
+           [:div.flex.flex-row.gap-1.items-center
+            (icon-component/get-node-icon-cp status {:size 14 :color? true})
+            [:div (:block/title status)]]
+           [:div (date/int->local-time-2 (:block/created-at item))]]))]]))
+
+(rum/defc task-spent-time-cp
+  [block]
+  (when (and (state/enable-timetracking?) (ldb/class-instance? (db/entity :logseq.class/Task) block))
+    (let [[result set-result!] (rum/use-state nil)
+          repo (state/get-current-repo)
+          [status-history time-spent] result]
+      (rum/use-effect!
+       (fn []
+         (p/let [result (db-async/<task-spent-time repo (:db/id block))]
+           (set-result! result)))
+       [(:logseq.task/status block)])
+      (when (and time-spent (> time-spent 0))
+        [:div.text-sm.time-spent.ml-1
+         (shui/button
+          {:variant :ghost
+           :size :sm
+           :class "text-muted-foreground !py-0 !px-1 h-6 font-normal"
+           :on-click (fn [e]
+                       (shui/popup-show! (.-target e)
+                                         (fn [] (status-history-cp status-history))
+                                         {:align :end}))}
+          (clock/seconds->days:hours:minutes:seconds time-spent))]))))
 
 (rum/defc ^:large-vars/cleanup-todo block-content < rum/reactive
   [config {:block/keys [uuid properties scheduled deadline format pre-block?] :as block} edit-input-id block-id slide?]
-  (let [collapsed? (:collapsed? config)
+  (let [format (or format :markdown)
+        collapsed? (:collapsed? config)
         repo (state/get-current-repo)
-        content (if (config/db-based-graph? (state/get-current-repo))
+        db-based? (config/db-based-graph? (state/get-current-repo))
+        content (if db-based?
                   (:block/raw-title block)
                   (property-util/remove-built-in-properties format (:block/raw-title block)))
         block (merge block (block/parse-title-and-body uuid format pre-block? content))
@@ -2795,7 +2845,9 @@
          [:div.block-head-wrap
           (block-title config block)])
 
-       (file-block/clock-summary-cp block ast-body)]
+       (if db-based?
+         (task-spent-time-cp block)
+         (file-block/clock-summary-cp block ast-body))]
 
       (when deadline
         (when-let [deadline-ast (block-handler/get-deadline-ast block)]
@@ -2876,7 +2928,8 @@
                     ::hide-block-refs? (atom default-hide?)
                     ::refs-count *refs-count)))}
   [state config {:block/keys [uuid format] :as block} {:keys [edit-input-id block-id edit? hide-block-refs-count?]}]
-  (let [*hide-block-refs? (get state ::hide-block-refs?)
+  (let [format (or format :markdown)
+        *hide-block-refs? (get state ::hide-block-refs?)
         *refs-count (get state ::refs-count)
         hide-block-refs? (rum/react *hide-block-refs?)
         editor-box (state/get-component :editor/box)
@@ -3067,7 +3120,7 @@
                                  [block (page-cp {} block)]
                                  (let [result (block/parse-title-and-body
                                                uuid
-                                               (:block/format block)
+                                               (get block :block/format :markdown)
                                                (:block/pre-block? block)
                                                title)
                                        ast-body (:block.temp/ast-body result)
@@ -3084,9 +3137,10 @@
                                (map (fn [x]
                                       (if (and (vector? x) (second x))
                                         (let [[block label] x]
-                                          (rum/with-key (breadcrumb-fragment config block label opts) (:block/uuid block)))
-                                        [:span.opacity-70 "⋯"])))
-                               (interpose (breadcrumb-separator)))]
+                                          (rum/with-key (breadcrumb-fragment config block label opts)
+                                            (str (:block/uuid block))))
+                                        [:span.opacity-70 {:key "dots"} "⋯"])))
+                               (interpose (rum/with-key (breadcrumb-separator) "icon")))]
           (when (seq breadcrumbs)
             [:div.breadcrumb.block-parents
              {:class (when (seq breadcrumbs)
@@ -3165,7 +3219,7 @@
 
             (contains? transfer-types "Files")
             (let [files (.-files data-transfer)
-                  format (:block/format target-block)]
+                  format (get target-block :block/format :markdown)]
               ;; When editing, this event will be handled by editor-handler/upload-asset(editor-on-paste)
               (when (and (config/local-file-based-graph? repo) (not (state/editing?)))
                 ;; Basically the same logic as editor-handler/upload-asset,
@@ -3478,7 +3532,7 @@
             (block-reference {} (str uuid) nil)
           ;; Not embed self
             [:div.flex.flex-col.w-full
-             (let [block (merge block (block/parse-title-and-body uuid (:block/format block) pre-block? title))
+             (let [block (merge block (block/parse-title-and-body uuid (get block :block/format :markdown) pre-block? title))
                    hide-block-refs-count? (or (and (:embed? config)
                                                    (= (:block/uuid block) (:embed-id config)))
                                               table?)]
