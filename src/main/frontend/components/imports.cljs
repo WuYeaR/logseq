@@ -31,7 +31,8 @@
             [logseq.shui.form.core :as form-core]
             [logseq.shui.ui :as shui]
             [promesa.core :as p]
-            [rum.core :as rum]))
+            [rum.core :as rum]
+            [frontend.hooks :as hooks]))
 
 ;; Can't name this component as `frontend.components.import` since shadow-cljs
 ;; will complain about it.
@@ -283,6 +284,13 @@
     (log/info :org-files (mapv :path org-files))
     (notification/show! (str "Imported " (count org-files) " org file(s) as markdown. Support for org files will be added later.")
                         :info false))
+  (when-let [ignored-files (seq @(:ignored-files import-state))]
+    (notification/show! (str "Import ignored " (count ignored-files) " "
+                             (if (= 1 (count ignored-files)) "file" "files")
+                             ". See the javascript console for more details.")
+                        :info false)
+    (log/error :import-ignored-files {:msg (str "Import ignored " (count ignored-files) " file(s)")})
+    (pprint/pprint ignored-files))
   (when-let [ignored-props (seq @(:ignored-properties import-state))]
     (notification/show!
      [:.mb-2
@@ -429,7 +437,7 @@
 
 (rum/defc import-indicator
   [importing?]
-  (rum/use-effect!
+  (hooks/use-effect!
    (fn []
      (when (and importing? (not (shui-dialog/get-modal :import-indicator)))
        (shui/dialog-open! indicator-progress

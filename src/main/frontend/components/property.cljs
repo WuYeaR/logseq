@@ -32,7 +32,8 @@
             [logseq.outliner.property :as outliner-property]
             [logseq.shui.ui :as shui]
             [promesa.core :as p]
-            [rum.core :as rum]))
+            [rum.core :as rum]
+            [frontend.hooks :as hooks]))
 
 (defn- <add-property-from-dropdown
   "Adds an existing or new property from dropdown. Used from a block or page context."
@@ -145,7 +146,7 @@
   (let [[properties set-properties!] (rum/use-state nil)
         [classes set-classes!] (rum/use-state nil)
         [excluded-properties set-excluded-properties!] (rum/use-state nil)]
-    (rum/use-effect!
+    (hooks/use-effect!
      (fn []
        (p/let [repo (state/get-current-repo)
                properties (db-async/<db-based-get-all-properties repo)
@@ -687,6 +688,10 @@
            (let [properties (->> (:logseq.property.class/properties block)
                                  (map (fn [e] [(:db/ident e)])))
                  opts' (assoc opts :class-schema? true)]
-             [:div
-              (properties-section block properties opts')
-              (rum/with-key (new-property block opts') (str id "-class-add-property"))]))]))))
+             [:<>
+              [:div.mt-2
+               [:div.text-sm.text-muted-foreground.mb-2 {:style {:margin-left 10}}
+                "Tag Properties:"]
+               [:div
+                (properties-section block properties opts')
+                (rum/with-key (new-property block opts') (str id "-class-add-property"))]]]))]))))
