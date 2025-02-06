@@ -5,32 +5,8 @@
             [datascript.core :as d]
             [flatland.ordered.map :refer [ordered-map]]
             [logseq.common.defkeywords :refer [defkeywords]]
-            [logseq.common.util :as common-util]
             [logseq.common.uuid :as common-uuid]
-            [logseq.db.frontend.db-ident :as db-ident]
-            [logseq.db.frontend.order :as db-order]
-            [logseq.db.frontend.property.type :as db-property-type]))
-
-(defn build-property-value-block
-  "Builds a property value entity given a block map/entity, a property entity or
-  ident and its property value"
-  [block property value]
-  (let [block-id (or (:db/id block) (:db/ident block))]
-    (-> (merge
-         {:block/uuid (d/squuid)
-          :block/page (if (:block/page block)
-                        (:db/id (:block/page block))
-                        ;; page block
-                        block-id)
-          :block/parent block-id
-          :logseq.property/created-from-property (if (= (:db/ident property) :logseq.property/default-value)
-                                                   block-id
-                                                   (or (:db/id property) {:db/ident (:db/ident property)}))
-          :block/order (db-order/gen-key)}
-         (if (db-property-type/property-value-content? (get-in block [:block/schema :type]) property)
-           {:property.value/content value}
-           {:block/title value}))
-        common-util/block-with-timestamps)))
+            [logseq.db.frontend.db-ident :as db-ident]))
 
 ;; Main property vars
 ;; ==================
@@ -38,6 +14,7 @@
 (def ^:large-vars/data-var built-in-properties*
   "Map of built in properties for db graphs with their :db/ident as keys.
    Each property has a config map with the following keys:
+   TODO: Move some of these keys to :properties since :schema is a deprecated concept
    * :schema - Property's schema. Required key. Has the following common keys:
      * :type - Property type
      * :cardinality - property cardinality. Default to one/single cardinality if not set
@@ -48,7 +25,8 @@
        seen in when :public? is set. Valid values are :page, :block and :never. Property can
        be viewed in any context if not set
    * :title - Property's :block/title
-   * :name - Property's :block/name as a keyword. If none given, one is derived from the db/ident
+   * :name - Property's :block/name as a keyword. If none given, one is derived from the db/ident.
+      TODO: This is barely used for old properties. Deprecate this and move to gp-exporter
    * :attribute - Property keyword that is saved to a datascript attribute outside of :block/properties
    * :queryable? - Boolean for whether property can be queried in the query builder
    * :closed-values - Vec of closed-value maps for properties with choices. Map
@@ -58,13 +36,40 @@
   (apply
    ordered-map
    (defkeywords
-     :block/alias           {:title "Alias"
-                             :attribute :block/alias
-                             :schema {:type :page
-                                      :cardinality :many
-                                      :view-context :page
-                                      :public? true}
-                             :queryable? true}
+     :logseq.property/type {:title "Property type"
+                            :schema {:type :keyword
+                                     :hide? true}}
+     :logseq.property/hide? {:title "Hide this property"
+                             :schema {:type :checkbox
+                                      :hide? true}}
+     :logseq.property/public? {:title "Property public?"
+                               :schema {:type :checkbox
+                                        :hide? true}}
+     :logseq.property/view-context {:title "Property view context"
+                                    :schema {:type :keyword
+                                             :hide? true}}
+     :logseq.property/ui-position {:title "Property position"
+                                   :schema {:type :keyword
+                                            :hide? true}}
+     :logseq.property/classes
+     {:title "Property classes"
+      :schema {:type :entity
+               :cardinality :many
+               :public? false
+               :hide? true}}
+     :logseq.property/value
+     {:title "Property value"
+      :schema {:type :any
+               :public? false
+               :hide? true}}
+
+     :block/alias          {:title "Alias"
+                            :attribute :block/alias
+                            :schema {:type :page
+                                     :cardinality :many
+                                     :view-context :page
+                                     :public? true}
+                            :queryable? true}
      :block/tags           {:title "Tags"
                             :attribute :block/tags
                             :schema {:type :class
@@ -72,16 +77,6 @@
                                      :public? true
                                      :classes #{:logseq.class/Root}}
                             :queryable? true}
-     :logseq.property.attribute/kv-value {:title "KV value"
-                                          :attribute :kv/value
-                                          :schema {:type :any
-                                                   :public? false
-                                                   :hide? true}}
-     :block/schema         {:title "Node schema"
-                            :attribute :block/schema
-                            :schema {:type :map
-                                     :public? false
-                                     :hide? true}}
      :block/parent         {:title "Node parent"
                             :attribute :block/parent
                             :schema {:type :entity
@@ -139,26 +134,16 @@
                             :schema {:type :datetime
                                      :public? false
                                      :hide? true}}
-     :logseq.property.attribute/property-schema-classes
-     {:title "Property classes"
-      :attribute :property/schema.classes
-      :schema {:type :entity
-               :cardinality :many
-               :public? false
-               :hide? true}}
-     :logseq.property.attribute/property-value-content
-     {:title "Property value"
-      :attribute :property.value/content
-      :schema {:type :any
-               :public? false
-               :hide? true}}
-
      :logseq.property.node/display-type {:title "Node Display Type"
                                          :schema {:type :keyword
                                                   :public? false
                                                   :hide? true
                                                   :view-context :block}
                                          :queryable? true}
+     :logseq.property/description {:title "Description"
+                                   :schema
+                                   {:type :default
+                                    :public? true}}
      :logseq.property.code/lang {:title "Code Mode"
                                  :schema {:type :string
                                           :public? false
@@ -275,20 +260,6 @@
                                             {:type :string
                                              :public? false}}
 
-   ;; TODO: should we replace block/journal-day with those separate props?
-   ;; :logseq.property.journal/year {:title "Journal year"
-   ;;                                :schema
-   ;;                                {:type :raw-number
-   ;;                                 :public? false}}
-   ;; :logseq.property.journal/month {:title "Journal month"
-   ;;                                 :schema
-   ;;                                 {:type :raw-number
-   ;;                                  :public? false}}
-   ;; :logseq.property.journal/day {:title "Journal day"
-   ;;                               :schema
-   ;;                               {:type :raw-number
-   ;;                                :public? false}}
-
      :logseq.property/choice-checkbox-state
      {:title "Choice checkbox state"
       :schema {:type :checkbox
@@ -306,7 +277,7 @@
       :schema
       {:type :default
        :public? true
-       :position :block-left}
+       :ui-position :block-left}
       :closed-values
       (mapv (fn [[db-ident value icon]]
               {:db-ident db-ident
@@ -324,7 +295,7 @@
       :schema
       {:type :default
        :public? true
-       :position :block-left}
+       :ui-position :block-left}
       :closed-values
       (mapv (fn [[db-ident value icon checkbox-state]]
               {:db-ident db-ident
@@ -347,28 +318,25 @@
      {:title "Deadline"
       :schema {:type :datetime
                :public? true
-               :position :block-below}
-      :properties {:logseq.property/hide-empty-value true}
+               :ui-position :block-below}
+      :properties {:logseq.property/hide-empty-value true
+                   :logseq.property/description "Use it to finish something at a specific date(time)."}
       :queryable? true}
      :logseq.task/scheduled
      {:title "Scheduled"
       :schema {:type :datetime
                :public? true
-               :position :block-below}
-      :properties {:logseq.property/hide-empty-value true}
+               :ui-position :block-below}
+      :properties {:logseq.property/hide-empty-value true
+                   :logseq.property/description "Use it to plan something to start at a specific date(time)."}
       :queryable? true}
      :logseq.task/recur-frequency
      (let [schema {:type :number
                    :public? false}]
        {:title "Recur frequency"
         :schema schema
-        :properties (let [block {:db/ident :logseq.task/recur-frequency
-                                 :block/schema schema}
-                          property {:db/ident :logseq.property/default-value
-                                    :block/schema {:type :entity}}
-                          default-value (assoc (build-property-value-block block property 1) :db/id -1)]
-                      {:logseq.property/hide-empty-value true
-                       :logseq.property/default-value default-value})
+        :properties {:logseq.property/hide-empty-value true
+                     :logseq.property/default-value 1}
         :queryable? true})
      :logseq.task/recur-unit
      {:title "Recur unit"
@@ -405,22 +373,18 @@
 
      :logseq.property/icon {:title "Icon"
                             :schema {:type :map}}
-     :logseq.property/public {:title "Publishing Public?"
-                              :schema
-                              {:type :checkbox
-                               :hide? true
-                               :view-context :page
-                               :public? true}}
+     :logseq.property/publishing-public? {:title "Publishing Public?"
+                                          :schema
+                                          {:type :checkbox
+                                           :hide? true
+                                           :view-context :page
+                                           :public? true}}
      :logseq.property/exclude-from-graph-view {:title "Excluded from Graph view?"
                                                :schema
                                                {:type :checkbox
                                                 :hide? true
                                                 :view-context :page
                                                 :public? true}}
-     :logseq.property/description {:title "Description"
-                                   :schema
-                                   {:type :default
-                                    :public? true}}
 
      :logseq.property.view/type
      {:title "View Type"
@@ -487,7 +451,15 @@
                                            :rtc {:rtc/ignore-attr-when-init-upload true
                                                  :rtc/ignore-attr-when-init-download true
                                                  :rtc/ignore-attr-when-syncing true}}
-
+     :logseq.property.table/pinned-columns {:title "Table view pinned columns"
+                                            :schema
+                                            {:type :property
+                                             :cardinality :many
+                                             :hide? true
+                                             :public? false}
+                                            :rtc {:rtc/ignore-attr-when-init-upload true
+                                                  :rtc/ignore-attr-when-init-download true
+                                                  :rtc/ignore-attr-when-syncing true}}
      :logseq.property/view-for {:title "This view belongs to"
                                 :schema
                                 {:type :node
@@ -587,15 +559,14 @@
 
 (def db-attribute-properties
   "Internal properties that are also db schema attributes"
-  #{:block/alias :block/tags :block/schema :block/parent
+  #{:block/alias :block/tags :block/parent
     :block/order :block/collapsed? :block/page
     :block/refs :block/path-refs :block/link
     :block/title :block/closed-value-property
-    :block/created-at :block/updated-at
-    :logseq.property.attribute/kv-value :logseq.property.attribute/property-schema-classes :logseq.property.attribute/property-value-content})
+    :block/created-at :block/updated-at})
 
 (assert (= db-attribute-properties
-           (set (keep (fn [[k {:keys [attribute]}]] (when attribute k))
+           (set (keep (fn [[_k {:keys [attribute]}]] (when attribute attribute))
                       built-in-properties)))
         "All db attribute properties are configured in built-in-properties")
 
@@ -612,6 +583,24 @@
 (def read-only-properties
   "Property values that shouldn't be updated"
   #{:logseq.property/built-in?})
+
+(def schema-properties-map
+  "Maps schema unqualified keywords to their qualified keywords.
+   The qualified keywords are all properties except for :db/cardinality
+   which is a datascript attribute"
+  {:cardinality :db/cardinality
+   :type :logseq.property/type
+   :hide? :logseq.property/hide?
+   :public? :logseq.property/public?
+   :ui-position :logseq.property/ui-position
+   :view-context :logseq.property/view-context
+   :classes :logseq.property/classes})
+
+(def schema-properties
+  "Properties that used to be in block/schema. Schema originally referred to just type and cardinality
+   but expanded to include a property's core configuration because it was easy to add to the schema map.
+   We should move some of these out since they are just like any other properties e.g. :view-context"
+  (set (vals schema-properties-map)))
 
 (def logseq-property-namespaces
   #{"logseq.property" "logseq.property.tldraw" "logseq.property.pdf" "logseq.property.fsrs" "logseq.task"
@@ -675,16 +664,16 @@
   "Gets content/value of a given closed value ent/map. Works for all closed value types"
   [ent]
   (or (:block/title ent)
-      (:property.value/content ent)))
+      (:logseq.property/value ent)))
 
 (defn property-value-content
   "Given an entity, gets the content for the property value of a ref type
   property i.e. what the user sees. For page types the content is the page name"
   [ent]
   (or (:block/title ent)
-      (:property.value/content ent)))
+      (:logseq.property/value ent)))
 
-(defn ref->property-value-content
+(defn- ref->property-value-content
   "Given a ref from a pulled query e.g. `{:db/id X}`, gets a readable name for
   the property value of a ref type property"
   [db ref]
@@ -749,4 +738,8 @@
   "Indicates whether built-in property can be seen and edited by users"
   [entity]
   ;; No need to do :built-in? check yet since user properties can't set this
-  (get-in entity [:block/schema :public?]))
+  (:logseq.property/public? entity))
+
+(defn get-property-schema
+  [property-m]
+  (select-keys property-m schema-properties))

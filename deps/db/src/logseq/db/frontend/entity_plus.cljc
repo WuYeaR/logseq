@@ -31,7 +31,7 @@
   "These db-ident entities are immutable,
   it means `(db/entity :block/title)` always return same result"
   #{:block/link :block/updated-at :block/refs :block/closed-value-property
-    :block/created-at :block/collapsed? :block/schema :block/tags :block/title
+    :block/created-at :block/collapsed? :block/tags :block/title
     :block/path-refs :block/parent :block/order :block/page
 
     :logseq.property/created-from-property
@@ -114,16 +114,37 @@
        ;; property default value
        (when (qualified-keyword? k)
          (when-let [property (entity-memoized db k)]
-           (let [schema (lookup-entity property :block/schema nil)]
-             (if (= :checkbox (:type schema))
+           (let [property-type (lookup-entity property :logseq.property/type nil)]
+             (if (= :checkbox property-type)
                (lookup-entity property :logseq.property/scalar-default-value nil)
                (lookup-entity property :logseq.property/default-value nil)))))))))
 
+(defn- get-property-keys
+  [^Entity e]
+  (let [db (.-db e)]
+    (if (db-based-graph? db)
+      (->> (map :a (d/datoms db :eavt (.-eid e)))
+           distinct
+           (filter db-property/property?))
+      (keys (lookup-entity e :block/properties nil)))))
+
+(defn- get-properties
+  [^Entity e]
+  (let [db (.-db e)]
+    (if (db-based-graph? db)
+      (lookup-entity e :block/properties
+                     (->> (into {} e)
+                          (filter (fn [[k _]] (db-property/property? k)))
+                          (into {})))
+      (lookup-entity e :block/properties nil))))
+
+;; (defonce *id->k-frequency (atom {}))
 (defn lookup-kv-then-entity
   ([e k] (lookup-kv-then-entity e k nil))
   ([^Entity e k default-value]
    (try
      (when k
+       ;; (swap! *id->k-frequency update-in [(.-eid e) k] inc)
        (let [db (.-db e)]
          (case k
            :block/raw-title
@@ -132,12 +153,10 @@
              (lookup-entity e :block/title default-value))
 
            :block/properties
-           (if (db-based-graph? db)
-             (lookup-entity e :block/properties
-                            (->> (into {} e)
-                                 (filter (fn [[k _]] (db-property/property? k)))
-                                 (into {})))
-             (lookup-entity e :block/properties nil))
+           (get-properties e)
+
+           :block.temp/property-keys
+           (get-property-keys e)
 
            ;; cache :block/title
            :block/title

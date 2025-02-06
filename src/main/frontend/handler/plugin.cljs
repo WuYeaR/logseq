@@ -628,9 +628,7 @@
             dotroot (get-ls-dotdir-root)
             filepath (util/node-path.join dotroot dirname (str key ".json"))]
         (if (util/electron?)
-          (p/let [exist? (fs/file-exists? filepath)
-                  _ (when-not exist? (fs/mkdir! filepath))
-                  _ (fs/create-if-not-exists repo nil filepath (js/JSON.stringify default))
+          (p/let [_ (fs/create-if-not-exists repo nil filepath (js/JSON.stringify default))
                   json (fs/read-file nil filepath)]
             [filepath (js/JSON.parse json)])
           (p/let [data (idb/get-item filepath)]
@@ -783,16 +781,16 @@
                           (some-> (re-find #"github.com/([^/]+/[^/]+)" url) (last)))
             package-url (if github?
                           (some-> github-repo
-                             (plugin-common-handler/get-web-plugin-checker-url!))
+                                  (plugin-common-handler/get-web-plugin-checker-url!))
                           (str url "/package.json"))
             ^js res (js/window.fetch (str package-url "?v=" (js/Date.now)))
             package (if (and (.-ok res)
-                          (= (.-status res) 200))
+                             (= (.-status res) 200))
                       (-> (.json res)
-                        (p/then bean/->clj))
+                          (p/then bean/->clj))
                       (throw (js/Error. (.text res))))
             logseq (or (:logseq package)
-                     (throw (js/Error. "Illegal logseq package")))]
+                       (throw (js/Error. "Illegal logseq package")))]
       (let [id (if github?
                  (some-> github-repo (string/replace "/" "_"))
                  (or (:id logseq) (:name package)))
@@ -800,27 +798,28 @@
             theme? (some? (or (:theme logseq) (:themes logseq)))]
 
         (plugin-common-handler/emit-lsp-updates!
-          {:status :completed
-           :only-check false
-           :payload {:id id
-                     :repo repo
-                     :dst repo
-                     :theme theme?
-                     :web-pkg (cond-> package
+         {:status :completed
+          :only-check false
+          :payload {:id id
+                    :repo repo
+                    :dst repo
+                    :theme theme?
+                    :web-pkg (cond-> package
 
-                                (not github?)
-                                (assoc :installedFromUserWebUrl url))}}))
+                               (not github?)
+                               (assoc :installedFromUserWebUrl url))}}))
       url)))
 
 ;; components
 (rum/defc lsp-indicator < rum/reactive
   []
-  (let [text (state/sub :plugin/indicator-text)]
-    [:div.flex.align-items.justify-center.h-screen.w-full.preboot-loading
-     [:span.flex.items-center.justify-center.flex-col
-      [:small.scale-250.opacity-50.mb-10.animate-pulse (svg/logo)]
-      [:small.block.text-sm.relative.opacity-50 {:style {:right "-8px" :min-height "24px"}}
-       (str text)]]]))
+  (let [text (or (state/sub :plugin/indicator-text) (when (not (util/electron?)) "LOADING"))]
+    (when-not (true? text)
+      [:div.flex.align-items.justify-center.h-screen.w-full.preboot-loading
+       [:span.flex.items-center.justify-center.flex-col
+        [:small.scale-250.opacity-50.mb-10.animate-pulse (svg/logo)]
+        [:small.block.text-sm.relative.opacity-50 {:style {:right "-8px" :min-height "24px"}}
+         (str text)]]])))
 
 (defn ^:large-vars/cleanup-todo init-plugins!
   [callback]
@@ -850,9 +849,9 @@
 
                   (.on "beforeload"
                        (fn [^js pl]
-                         (let [text (if (util/electron?)
-                                      (util/format "Load plugin: %s..." (.-id pl)) "Loading")]
-                           (state/set-state! :plugin/indicator-text text))))
+                         (let [text (when (util/electron?)
+                                      (util/format "Load plugin: %s..." (.-id pl)))]
+                           (some->> text (state/set-state! :plugin/indicator-text)))))
 
                   (.on "reloaded"
                        (fn [^js pl]
@@ -940,15 +939,16 @@
         plugins-async)
 
       (p/then
-       (fn [plugins-async]
-         (state/set-state! :plugin/indicator-text nil)
-        ;; wait for the plugin register async messages
-         (js/setTimeout
-          (fn [] (callback)
-            (some-> (seq plugins-async)
-                    (p/delay 16)
-                    (p/then #(.register js/LSPluginCore (bean/->js plugins-async) true))))
-          (if (util/electron?) 64 0))))
+        (fn [plugins-async]
+          ;; true indicate for preboot finished
+          (state/set-state! :plugin/indicator-text true)
+          ;; wait for the plugin register async messages
+          (js/setTimeout
+            (fn [] (callback)
+              (some-> (seq plugins-async)
+                (p/delay 16)
+                (p/then #(.register js/LSPluginCore (bean/->js plugins-async) true))))
+            (if (util/electron?) 64 0))))
       (p/catch
        (fn [^js e]
          (log/error :setup-plugin-system-error e)

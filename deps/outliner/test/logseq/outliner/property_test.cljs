@@ -1,32 +1,42 @@
 (ns logseq.outliner.property-test
   (:require [cljs.test :refer [deftest is testing are]]
             [datascript.core :as d]
-            [logseq.outliner.property :as outliner-property]
+            [logseq.db :as ldb]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.test.helper :as db-test]
-            [logseq.db :as ldb]))
+            [logseq.outliner.property :as outliner-property]))
 
 (deftest upsert-property!
   (testing "Creates a property"
     (let [conn (db-test/create-conn-with-blocks [])
-          _ (outliner-property/upsert-property! conn nil {:type :number} {:property-name "num"})]
-      (is (= {:type :number}
-             (:block/schema (d/entity @conn :user.property/num)))
+          _ (outliner-property/upsert-property! conn nil {:logseq.property/type :number} {:property-name "num"})]
+      (is (= :number
+             (:logseq.property/type (d/entity @conn :user.property/num)))
           "Creates property with property-name")))
 
   (testing "Updates a property"
-    (let [conn (db-test/create-conn-with-blocks {:properties {:num {:block/schema {:type :number}}}})
-          _ (outliner-property/upsert-property! conn :user.property/num {:type :default :cardinality :many} {})]
-      (is (db-property/many? (d/entity @conn :user.property/num)))))
+    (let [conn (db-test/create-conn-with-blocks {:properties {:num {:logseq.property/type :number}}})
+          old-updated-at (:block/updated-at (d/entity @conn :user.property/num))]
+
+      (testing "and change its cardinality"
+        (outliner-property/upsert-property! conn :user.property/num {:db/cardinality :many} {})
+        (is (db-property/many? (d/entity @conn :user.property/num)))
+        (is (> (:block/updated-at (d/entity @conn :user.property/num))
+               old-updated-at)))
+
+      (testing "and change its type from a ref to a non-ref type"
+        (outliner-property/upsert-property! conn :user.property/num {:logseq.property/type :checkbox} {})
+        (is (= :checkbox (:logseq.property/type (d/entity @conn :user.property/num))))
+        (is (= nil (:db/valueType (d/entity @conn :user.property/num)))))))
 
   (testing "Multiple properties that generate the same initial :db/ident"
     (let [conn (db-test/create-conn-with-blocks [])]
-      (outliner-property/upsert-property! conn nil {:type :default} {:property-name "p1"})
+      (outliner-property/upsert-property! conn nil {:logseq.property/type :default} {:property-name "p1"})
       (outliner-property/upsert-property! conn nil {} {:property-name "p1"})
       (outliner-property/upsert-property! conn nil {} {:property-name "p1"})
 
-      (is (= {:block/name "p1" :block/title "p1" :block/schema {:type :default}}
-             (select-keys (d/entity @conn :user.property/p1) [:block/name :block/title :block/schema]))
+      (is (= {:block/name "p1" :block/title "p1" :logseq.property/type :default}
+             (select-keys (d/entity @conn :user.property/p1) [:block/name :block/title :logseq.property/type]))
           "Existing db/ident does not get modified")
       (is (= "p1"
              (:block/title (d/entity @conn :user.property/p1-1)))
@@ -40,7 +50,7 @@
     (let [test-uuid (random-uuid)]
       (are [x y]
            (= (let [[schema-type value] x]
-                (outliner-property/convert-property-input-string nil {:block/schema {:type schema-type}} value)) y)
+                (outliner-property/convert-property-input-string nil {:logseq.property/type schema-type} value)) y)
         [:number "1"] 1
         [:number "1.2"] 1.2
         [:url test-uuid] test-uuid
@@ -60,7 +70,7 @@
           new-property-value (:user.property/default (db-test/find-block-by-content @conn "b2"))]
 
       (is (some? (:db/id new-property-value)) "New property value created")
-      (is (= "" (db-property/ref->property-value-content @conn new-property-value))
+      (is (= "" (db-property/property-value-content new-property-value))
           "Property value has correct content")
       (is (= :user.property/default
              (get-in (d/entity @conn (:db/id new-property-value)) [:logseq.property/created-from-property :db/ident]))
@@ -77,7 +87,7 @@
           new-property-value (:user.property/num (db-test/find-block-by-content @conn "b2"))]
 
       (is (some? (:db/id new-property-value)) "New property value created")
-      (is (= 3 (db-property/ref->property-value-content @conn new-property-value))
+      (is (= 3 (db-property/property-value-content new-property-value))
           "Property value has correct content")
       (is (= :user.property/num
              (get-in (d/entity @conn (:db/id new-property-value)) [:logseq.property/created-from-property :db/ident]))
@@ -102,7 +112,7 @@
           new-property-values (:user.property/num-many (db-test/find-block-by-content @conn "b2"))]
 
       (is (seq new-property-values) "New property values created")
-      (is (= #{3 4 5} (db-property/ref->property-value-contents @conn new-property-values))
+      (is (= #{3 4 5} (set (map db-property/property-value-content new-property-values)))
           "Property value has correct content"))))
 
 (deftest set-block-property-basic-cases
@@ -181,9 +191,35 @@
         _ (outliner-property/batch-set-property! conn block-ids :logseq.property/order-list-type "number")
         updated-blocks (map #(db-test/find-block-by-content @conn %) ["item 1" "item 2"])]
     (is (= ["number" "number"]
-           (map #(db-property/ref->property-value-contents @conn (:logseq.property/order-list-type %))
+           (map #(db-property/property-value-content (:logseq.property/order-list-type %))
                 updated-blocks))
         "Property values are batch set")))
+
+(deftest status-property-setting-classes
+  (let [conn (db-test/create-conn-with-blocks
+              {:classes {:Project {:build/class-properties [:logseq.task/status]}}
+               :pages-and-blocks
+               [{:page {:block/title "page1"}
+                 :blocks [{:block/title ""}
+                          {:block/title "project task" :build/tags [:Project]}]}]})
+        page1 (:block/uuid (db-test/find-page-by-title @conn "page1"))
+        [empty-task project]
+        (map #(:block/uuid (db-test/find-block-by-content @conn %)) ["" "project task"])]
+
+    (outliner-property/batch-set-property! conn [empty-task] :logseq.task/status :logseq.task/status.doing)
+    (is (= [:logseq.class/Task]
+           (mapv :db/ident (:block/tags (d/entity @conn [:block/uuid empty-task]))))
+        "Adds Task to block when it is not tagged")
+
+    (outliner-property/batch-set-property! conn [page1] :logseq.task/status :logseq.task/status.doing)
+    (is (= #{:logseq.class/Task :logseq.class/Page}
+           (set (map :db/ident (:block/tags (d/entity @conn [:block/uuid page1])))))
+        "Adds Task to page without tag")
+
+    (outliner-property/batch-set-property! conn [project] :logseq.task/status :logseq.task/status.doing)
+    (is (= [:user.class/Project]
+           (mapv :db/ident (:block/tags (d/entity @conn [:block/uuid project]))))
+        "Doesn't add Task to block when it is already tagged")))
 
 (deftest batch-remove-property!
   (let [conn (db-test/create-conn-with-blocks
@@ -210,7 +246,7 @@
 (deftest upsert-closed-value!
   (let [conn (db-test/create-conn-with-blocks
               {:properties {:num {:build/closed-values [{:uuid (random-uuid) :value 2}]
-                                  :block/schema {:type :number}}}})]
+                                  :logseq.property/type :number}}})]
 
     (testing "Add non-number choice shouldn't work"
       (is
@@ -228,13 +264,13 @@
 
     (testing "Add choice successfully"
       (let [_ (outliner-property/upsert-closed-value! conn :user.property/num {:value 3})
-            b (first (d/q '[:find [(pull ?b [*]) ...] :where [?b :property.value/content 3]] @conn))]
+            b (first (d/q '[:find [(pull ?b [*]) ...] :where [?b :logseq.property/value 3]] @conn))]
         (is (ldb/closed-value? (d/entity @conn (:db/id b))))
         (is (= [2 3]
                (map db-property/closed-value-content (:block/_closed-value-property (d/entity @conn :user.property/num)))))))
 
     (testing "Update choice successfully"
-      (let [b (first (d/q '[:find [(pull ?b [*]) ...] :where [?b :property.value/content 2]] @conn))
+      (let [b (first (d/q '[:find [(pull ?b [*]) ...] :where [?b :logseq.property/value 2]] @conn))
             _ (outliner-property/upsert-closed-value! conn :user.property/num {:id (:block/uuid b)
                                                                                :value 4
                                                                                :description "choice 4"})
@@ -248,7 +284,7 @@
         conn (db-test/create-conn-with-blocks
               {:properties {:default {:build/closed-values [{:uuid closed-value-uuid :value "foo"}
                                                             {:uuid used-closed-value-uuid :value "bar"}]
-                                      :block/schema {:type :default}}}
+                                      :logseq.property/type :default}}
                :pages-and-blocks
                [{:page {:block/title "page1"}
                  :blocks [{:block/title "b1" :user.property/default [:block/uuid used-closed-value-uuid]}]}]})
@@ -260,8 +296,8 @@
 (deftest class-add-property!
   (let [conn (db-test/create-conn-with-blocks
               {:classes {:c1 {}}
-               :properties {:p1 {:block/schema {:type :default}}
-                            :p2 {:block/schema {:type :default}}}})
+               :properties {:p1 {:logseq.property/type :default}
+                            :p2 {:logseq.property/type :default}}})
         _ (outliner-property/class-add-property! conn :user.class/c1 :user.property/p1)
         _ (outliner-property/class-add-property! conn :user.class/c1 :user.property/p2)]
     (is (= [:user.property/p1 :user.property/p2]
@@ -269,15 +305,15 @@
 
 (deftest class-remove-property!
   (let [conn (db-test/create-conn-with-blocks
-              {:classes {:c1 {:build/schema-properties [:p1 :p2]}}})
+              {:classes {:c1 {:build/class-properties [:p1 :p2]}}})
         _ (outliner-property/class-remove-property! conn :user.class/c1 :user.property/p1)]
     (is (= [:user.property/p2]
            (map :db/ident (:logseq.property.class/properties (d/entity @conn :user.class/c1)))))))
 
 (deftest get-block-classes-properties
   (let [conn (db-test/create-conn-with-blocks
-              {:classes {:c1 {:build/schema-properties [:p1]}
-                         :c2 {:build/schema-properties [:p2 :p3]}}
+              {:classes {:c1 {:build/class-properties [:p1]}
+                         :c2 {:build/class-properties [:p2 :p3]}}
                :pages-and-blocks
                [{:page {:block/title "p1"}
                  :blocks [{:block/title "o1"

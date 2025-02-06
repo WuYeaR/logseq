@@ -1,16 +1,16 @@
 (ns logseq.db.sqlite.create-graph-test
   (:require [cljs.test :refer [deftest is testing]]
-            [clojure.string :as string]
             [clojure.set :as set]
+            [clojure.string :as string]
             [datascript.core :as d]
-            [logseq.db.frontend.schema :as db-schema]
-            [logseq.db.sqlite.create-graph :as sqlite-create-graph]
-            [logseq.db.frontend.validate :as db-validate]
-            [logseq.db.frontend.property :as db-property]
-            [logseq.db.sqlite.build :as sqlite-build]
             [logseq.db :as ldb]
-            [logseq.db.test.helper :as db-test]
-            [logseq.db.frontend.class :as db-class]))
+            [logseq.db.frontend.class :as db-class]
+            [logseq.db.frontend.property :as db-property]
+            [logseq.db.frontend.schema :as db-schema]
+            [logseq.db.frontend.validate :as db-validate]
+            [logseq.db.sqlite.build :as sqlite-build]
+            [logseq.db.sqlite.create-graph :as sqlite-create-graph]
+            [logseq.db.test.helper :as db-test]))
 
 (deftest new-graph-db-idents
   (testing "a new graph follows :db/ident conventions for"
@@ -29,7 +29,7 @@
         (is (= []
                (->> (remove db-property/db-attribute-properties default-idents)
                     (keep namespace)
-                    (remove #(string/starts-with? % "logseq."))))
+                    (remove #(string/starts-with? % "logseq"))))
             "All default :db/ident namespaces start with logseq."))
 
       (testing "closed values"
@@ -76,8 +76,9 @@
 
 (deftest new-graph-initializes-default-classes-correctly
   (let [conn (db-test/create-conn)]
-    (is (= (count db-class/built-in-classes) (count (d/datoms @conn :avet :block/tags :logseq.class/Tag)))
-        "All built-in classes have a :logseq.class/Tag")
+    (is (= (set (keys db-class/built-in-classes))
+           (set (map #(:db/ident (d/entity @conn (:e %))) (d/datoms @conn :avet :block/tags :logseq.class/Tag))))
+        "All built-in classes are indexed by :block/tags with :logseq.class/Tag")
 
     (is (= (count (dissoc db-class/built-in-classes :logseq.class/Root))
            (count (->> (d/datoms @conn :avet :block/tags :logseq.class/Tag)
@@ -86,11 +87,49 @@
                        set)))
         "Reverse lookup of :logseq.property/parent correctly fetches number of child classes")))
 
+(deftest new-graph-initializes-default-properties-correctly
+  (let [conn (db-test/create-conn)]
+    (is (= (set (keys db-property/built-in-properties))
+           (set (map #(:db/ident (d/entity @conn (:e %))) (d/datoms @conn :avet :block/tags :logseq.class/Property))))
+        "All built-in properties are indexed by :block/tags with :logseq.class/Property")
+    (is (= (set (keys db-property/built-in-properties))
+           (set (map #(:db/ident (d/entity @conn (:e %))) (d/datoms @conn :avet :logseq.property/type))))
+        "All built-in properties have and are indexed by :logseq.property/type")
+    (is (= #{}
+           (set/difference
+            (set (keys db-property/built-in-properties))
+            (set (map #(:db/ident (d/entity @conn (:e %))) (d/datoms @conn :avet :logseq.property/built-in?)))))
+        "All built-in properties have and are indexed by :logseq.property/built-in?")
+
+    ;; testing :properties config
+    (testing "A built-in property that has"
+      (is (= :logseq.task/status.todo
+             (-> (d/entity @conn :logseq.task/status)
+                 :logseq.property/default-value
+                 :db/ident))
+          "A property with a :db/ident property value is created correctly")
+      (is (-> (d/entity @conn :logseq.task/deadline)
+              :logseq.property/description
+              db-property/property-value-content
+              str
+              (string/includes? "finish something"))
+          "A :default property is created correctly")
+      (is (= true
+             (-> (d/entity @conn :logseq.task/status)
+                 :logseq.property/enable-history?))
+          "A :checkbox property is created correctly")
+      (is (= 1
+             (-> (d/entity @conn :logseq.task/recur-frequency)
+                 :logseq.property/default-value
+                 db-property/property-value-content))
+          "A numeric property is created correctly"))))
+
 (deftest new-graph-is-valid
   (let [conn (db-test/create-conn)
         validation (db-validate/validate-db! @conn)]
     ;; For debugging
     ;; (println (count (:errors validation)) "errors of" (count (:entities validation)))
+    ;; (cljs.pprint/pprint (:errors validation))
     (is (empty? (map :entity (:errors validation)))
         "New graph has no validation errors")))
 
@@ -102,7 +141,7 @@
     (testing ":url property"
       (sqlite-build/create-blocks
        conn
-       {:properties {:url {:block/schema {:type :url}}}
+       {:properties {:url {:logseq.property/type :url}}
         :pages-and-blocks
         [{:page {:block/title "page1"}
           :blocks [{:block/title "b1" :build/properties {:url "https://logseq.com"}}

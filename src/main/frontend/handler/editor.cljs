@@ -2,7 +2,6 @@
   (:require [clojure.set :as set]
             [clojure.string :as string]
             [clojure.walk :as w]
-            [datascript.core :as d]
             [dommy.core :as dom]
             [frontend.commands :as commands]
             [frontend.config :as config]
@@ -30,6 +29,7 @@
             [frontend.handler.property.file :as property-file]
             [frontend.handler.property.util :as pu]
             [frontend.handler.route :as route-handler]
+            [frontend.handler.user :as user]
             [frontend.mobile.util :as mobile-util]
             [frontend.modules.outliner.op :as outliner-op]
             [frontend.modules.outliner.tree :as tree]
@@ -82,8 +82,7 @@
 
 (defn get-block-own-order-list-type
   [block]
-  (let [properties (:block/properties block)]
-    (pu/lookup properties :logseq.property/order-list-type)))
+  (pu/lookup block :logseq.property/order-list-type))
 
 (defn set-block-own-order-list-type!
   [block type]
@@ -282,12 +281,13 @@
   ([block value
     {:keys [force?]
      :as opts}]
-   (let [{:block/keys [uuid format repo title properties]} block
+   (let [{:block/keys [uuid format repo title]} block
          format (or format :markdown)
          repo (or repo (state/get-current-repo))
          format (or format (state/get-preferred-format))
-         block-id (when (and (not (config/db-based-graph? repo)) (map? properties))
-                    (get properties :id))
+         block-id (let [properties (:block/properties block)]
+                    (when (and (not (config/db-based-graph? repo)) (map? properties))
+                      (get properties :id)))
          content (if (config/db-based-graph? repo)
                    (:block/title (db/entity (:db/id block)))
                    (-> (property-file/remove-built-in-properties-when-file-based repo format title)
@@ -334,14 +334,16 @@
                    true
 
                    :else
-                   (not has-children?))]
+                   (not has-children?))
+        current-user-id (user/user-uuid)]
     (ui-outliner-tx/transact!
      {:outliner-op :insert-blocks}
      (save-current-block! {:current-block current-block})
      (outliner-op/insert-blocks! [new-block] current-block {:sibling? sibling?
                                                             :keep-uuid? keep-uuid?
                                                             :ordered-list? ordered-list?
-                                                            :replace-empty-target? replace-empty-target?}))))
+                                                            :replace-empty-target? replace-empty-target?
+                                                            :created-by current-user-id}))))
 
 (defn- block-self-alone-when-insert?
   [config uuid]
@@ -2735,7 +2737,7 @@
         (cursor/move-cursor-to-start input)
 
         (and property? right? (cursor/end? input)
-             (or (not= (get-in block [:block/schema :type]) :default)
+             (or (not= (:logseq.property/type block) :default)
                  (seq (:property/closed-values block))))
         (let [pair (util/rec-get-node input "property-pair")
               jtrigger (when pair (dom/sel1 pair ".property-value-container .jtrigger"))]
@@ -3464,12 +3466,12 @@
   [block]
   (let [class-properties (:classes-properties (outliner-property/get-block-classes-properties (db/get-db) (:db/id block)))
         db (db/get-db)
-        properties (->> (map :a (d/datoms db :eavt (:db/id block)))
+        properties (->> (:block.temp/property-keys block)
                         (map (partial entity-plus/entity-memoized db))
                         (concat class-properties)
                         (remove (fn [e] (db-property/db-attribute-properties (:db/ident e))))
                         (remove outliner-property/property-with-other-position?)
-                        (remove (fn [e] (:hide? (:block/schema e))))
+                        (remove (fn [e] (:logseq.property/hide? e)))
                         (remove nil?))]
     (or (seq properties)
         (ldb/class-instance? (entity-plus/entity-memoized db :logseq.class/Query) block))))

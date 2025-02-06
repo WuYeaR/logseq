@@ -26,7 +26,6 @@
                 (vswap! *fn-symbol->key->time-sum update-in [fn-sym k] #(+ % elapsed-time)))
               r))
         arity-n-fns (arity-n-fn 20 f)]
-    (prn :arity-n-fns arity-n-fns)
     (doseq [n arity-ns]
       (g/set f (str "cljs$core$IFn$_invoke$arity$" n) (nth arity-n-fns n)))
     f))
@@ -35,8 +34,7 @@
   [ns munged-name fn-sym original-fn-obj custom-key-fn]
   (let [ns-obj (find-ns-obj ns)
         profile-fn (get-profile-fn fn-sym original-fn-obj custom-key-fn)]
-    (g/set ns-obj munged-name profile-fn)
-    ))
+    (g/set ns-obj munged-name profile-fn)))
 
 (defn register-fn!
   "(custom-key-fn args-seq result) return non-nil key"
@@ -50,7 +48,6 @@
       (throw (ex-info (str "fn-sym not found: " fn-sym) {})))))
 
 (defn unregister-fn!
-  "TODO: not working on multi-arity fns"
   [fn-sym]
   (let [ns (namespace fn-sym)
         s (munge (name fn-sym))]
@@ -84,4 +81,6 @@
     ([a b] 1)
     ([b c d] 2))
 
+  (register-fn! 'frontend.handler.profiler/test-fn-to-profile
+                :custom-key-fn (fn [args result] {:a args :r result}))
   )

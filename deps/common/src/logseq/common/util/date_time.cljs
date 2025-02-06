@@ -1,8 +1,8 @@
 (ns logseq.common.util.date-time
   "cljs-time util fns for deps"
   (:require [cljs-time.coerce :as tc]
-            [cljs-time.format :as tf]
             [cljs-time.core :as t]
+            [cljs-time.format :as tf]
             [clojure.string :as string]
             [logseq.common.util :as common-util]))
 
@@ -100,8 +100,8 @@
 (defn ms->journal-day
   "Converts a milliseconds timestamp to the nearest :block/journal-day"
   [ms]
-  (->> ms
-       tc/from-long
-       t/to-default-time-zone
-       (tf/unparse (tf/formatter "yyyyMMdd"))
-       parse-long))
+  (some->> ms
+           tc/from-long
+           t/to-default-time-zone
+           (tf/unparse (tf/formatter "yyyyMMdd"))
+           parse-long))

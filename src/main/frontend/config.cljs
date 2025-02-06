@@ -17,13 +17,10 @@
 (defonce dev-release? DEV-RELEASE)
 (defonce dev? ^boolean (or dev-release? goog.DEBUG))
 
-(goog-define PUBLISHING false)
-(defonce publishing? PUBLISHING)
+(defonce publishing? common-config/PUBLISHING)
 
 (goog-define REVISION "unknown")
 (defonce revision REVISION)
-
-(reset! state/publishing? publishing?)
 
 (def ENABLE-FILE-SYNC-PRODUCTION false)
 
@@ -81,9 +78,6 @@
 (defn plugin-config-enabled?
   []
   (and lsp-enabled? (global-config-enabled?)))
-
-;; TODO: switch to `logseq-team` group check later @zhiyuan
-(def db-graph-enabled? true)
 
 ;; :TODO: How to do this?
 ;; (defonce desktop? ^boolean goog.DESKTOP)

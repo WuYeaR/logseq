@@ -1,7 +1,6 @@
 (ns frontend.components.objects
   "Provides table views for class objects and property related objects"
-  (:require [clojure.string :as string]
-            [frontend.components.filepicker :as filepicker]
+  (:require [frontend.components.filepicker :as filepicker]
             [frontend.components.views :as views]
             [frontend.db :as db]
             [frontend.db-mixins :as db-mixins]
@@ -9,6 +8,7 @@
             [frontend.db.model :as db-model]
             [frontend.db.react :as react]
             [frontend.handler.editor :as editor-handler]
+            [frontend.hooks :as hooks]
             [frontend.mixins :as mixins]
             [frontend.modules.outliner.op :as outliner-op]
             [frontend.modules.outliner.ui :as ui-outliner-tx]
@@ -21,7 +21,7 @@
             [logseq.shui.ui :as shui]
             [promesa.core :as p]
             [rum.core :as rum]
-            [frontend.hooks :as hooks]))
+            [logseq.db.frontend.property :as db-property]))
 
 (defn- get-class-objects
   [class]
@@ -131,7 +131,7 @@
                   columns*)
         columns (if (= (:db/ident class) :logseq.class/Asset)
                   ;; Insert in front of tag's properties
-                  (let [[before-cols after-cols] (split-with #(not (string/starts-with? (str (namespace (:id %))) "logseq.property")) columns)]
+                  (let [[before-cols after-cols] (split-with #(not (db-property/logseq-property? (:id %))) columns)]
                     (concat before-cols [(build-asset-file-column config)] after-cols))
                   columns)]
 
@@ -179,23 +179,22 @@
                    :add-property! (fn []
                                     (state/pub-event! [:editor/new-property {:block class
                                                                              :class-schema? true}]))
-                   ;; Objects of built-in classes must not be deleted e.g. Tag, Property and Root
-                   :on-delete-rows (when-not (:logseq.property/built-in? class)
-                                     (fn [table selected-rows]
-                                       (let [pages (->> selected-rows (filter ldb/page?) (remove :logseq.property/built-in?))
-                                             blocks (->> selected-rows (remove ldb/page?) (remove :logseq.property/built-in?))]
-                                         (p/do!
-                                          (set-data! (get-class-objects class))
-                                          (when-let [f (get-in table [:data-fns :set-row-selection!])]
-                                            (f {}))
-                                          (ui-outliner-tx/transact!
-                                           {:outliner-op :delete-blocks}
-                                           (when (seq blocks)
-                                             (outliner-op/delete-blocks! blocks nil))
-                                           (let [page-ids (map :db/id pages)
-                                                 tx-data (map (fn [pid] [:db/retract pid :block/tags (:db/id class)]) page-ids)]
-                                             (when (seq tx-data)
-                                               (outliner-op/transact! tx-data {:outliner-op :save-block}))))))))}))))
+                   :on-delete-rows (fn [table selected-rows]
+                                     ;; Built-in objects must not be deleted e.g. Tag, Property and Root
+                                     (let [pages (->> selected-rows (filter ldb/page?) (remove :logseq.property/built-in?))
+                                           blocks (->> selected-rows (remove ldb/page?) (remove :logseq.property/built-in?))]
+                                       (p/do!
+                                        (set-data! (get-class-objects class))
+                                        (when-let [f (get-in table [:data-fns :set-row-selection!])]
+                                          (f {}))
+                                        (ui-outliner-tx/transact!
+                                         {:outliner-op :delete-blocks}
+                                         (when (seq blocks)
+                                           (outliner-op/delete-blocks! blocks nil))
+                                         (let [page-ids (map :db/id pages)
+                                               tx-data (map (fn [pid] [:db/retract pid :block/tags (:db/id class)]) page-ids)]
+                                           (when (seq tx-data)
+                                             (outliner-op/transact! tx-data {:outliner-op :save-block})))))))}))))
 
 (rum/defcs class-objects < rum/reactive db-mixins/query mixins/container-id
   [state class {:keys [current-page? sidebar?]}]

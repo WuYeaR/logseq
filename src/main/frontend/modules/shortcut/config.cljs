@@ -358,31 +358,37 @@
                                              :fn      #(state/pub-event! [:editor/toggle-own-number-list (state/get-selection-block-ids)])}
 
    :editor/add-property                     {:binding (if mac? "mod+p" "ctrl+alt+p")
+                                             :db-graph? true
                                              :fn      (fn [e]
                                                         (when e (util/stop e))
                                                         (state/pub-event! [:editor/new-property {}]))}
 
    :editor/add-property-deadline            {:binding "p d"
+                                             :db-graph? true
                                              :selection? true
                                              :fn      (fn []
                                                         (state/pub-event! [:editor/new-property {:property-key "Deadline"}]))}
 
    :editor/add-property-status              {:binding "p s"
+                                             :db-graph? true
                                              :selection? true
                                              :fn      (fn []
                                                         (state/pub-event! [:editor/new-property {:property-key "Status"}]))}
 
    :editor/add-property-priority            {:binding "p p"
+                                             :db-graph? true
                                              :selection? true
                                              :fn      (fn []
                                                         (state/pub-event! [:editor/new-property {:property-key "Priority"}]))}
 
    :editor/add-property-icon                {:binding "p i"
+                                             :db-graph? true
                                              :selection? true
                                              :fn      (fn []
                                                         (state/pub-event! [:editor/new-property {:property-key "Icon"}]))}
 
    :editor/toggle-display-all-properties    {:binding "p t"
+                                             :db-graph? true
                                              :fn      ui-handler/toggle-show-empty-hidden-properties!}
 
    :ui/toggle-brackets                      {:binding "t b"
@@ -456,13 +462,11 @@
                                              :binding []}
 
    :graph/db-add                            {:fn #(state/pub-event! [:graph/new-db-graph])
-                                             ;; TODO: Remove this once feature is released
-                                             :inactive (not config/db-graph-enabled?)
                                              :binding false}
 
    :graph/db-save                           {:fn #(state/pub-event! [:graph/save-db-to-disk])
-                                             ;; TODO: Remove `(not config/db-graph-enabled?)` check once feature is released
-                                             :inactive (or (not config/db-graph-enabled?) (not (util/electron?)))
+                                             :inactive (not (util/electron?))
+                                             :db-graph? true
                                              :binding "mod+s"}
 
    :graph/re-index                          {:fn      (fn []
@@ -568,9 +572,13 @@
                                              :inactive (not config/lsp-enabled?)
                                              :fn       plugin-handler/goto-plugins-dashboard!}
 
-   :ui/install-plugins-from-file            {:binding  false
+   :ui/install-plugins-from-file            {:binding  []
                                              :inactive (not (config/plugin-config-enabled?))
                                              :fn       plugin-config-handler/open-replace-plugins-modal}
+
+   :ui/install-plugin-from-github           {:binding  []
+                                             :inactive (or (not config/lsp-enabled?) (not (util/electron?)))
+                                             :fn       plugin-config-handler/open-install-plugin-from-github-modal}
 
    :ui/clear-all-notifications              {:binding []
                                              :fn      :frontend.handler.notification/clear-all!}
@@ -605,7 +613,28 @@
                        :inactive (not (state/developer-mode?))
                        :fn :frontend.handler.common.developer/show-page-ast}
 
+   :dev/export-block-data {:binding []
+                           :db-graph? true
+                           :inactive (not (state/developer-mode?))
+                           :fn :frontend.handler.common.developer/export-block-data}
+
+   :dev/export-page-data {:binding []
+                          :db-graph? true
+                          :inactive (not (state/developer-mode?))
+                          :fn :frontend.handler.common.developer/export-page-data}
+
+   :dev/export-graph-ontology-data {:binding []
+                                    :db-graph? true
+                                    :inactive (not (state/developer-mode?))
+                                    :fn :frontend.handler.common.developer/export-graph-ontology-data}
+
+   :dev/import-edn-data {:binding []
+                         :db-graph? true
+                         :inactive (not (state/developer-mode?))
+                         :fn :frontend.handler.common.developer/import-edn-data}
+
    :dev/validate-db   {:binding []
+                       :db-graph? true
                        :inactive (not (state/developer-mode?))
                        :fn :frontend.handler.common.developer/validate-db}})
 
@@ -625,6 +654,15 @@
                                  (aget (munge (name keyword-fn))))]
       (resolved-fn)
       (throw (ex-info (str "Unable to resolve " keyword-fn " to a fn") {})))))
+
+(defn- wrap-fn-with-db-graph-only-warning
+  "Wraps DB graph only commands so they are only run in DB graphs and warned
+   when in file graphs"
+  [f]
+  (fn []
+    (if (config/db-based-graph? (state/get-current-repo))
+      (f)
+      (notification/show! "This command is only for DB graphs." :warning true nil 3000))))
 
 (defn- wrap-fn-with-file-graph-only-warning
   "Wraps file graph only commands so they are only run in file graphs and warned
@@ -653,9 +691,12 @@
                    (assoc v :fn (resolve-fn (:fn v)))
                    v)]))
        (map (fn [[k v]]
-              [k (if (:file-graph? v)
-                   (update v :fn wrap-fn-with-file-graph-only-warning)
-                   v)]))
+              [k (cond (:file-graph? v)
+                       (update v :fn wrap-fn-with-file-graph-only-warning)
+                       (:db-graph? v)
+                       (update v :fn wrap-fn-with-db-graph-only-warning)
+                       :else
+                       v)]))
        (into {})))
 
 ;; This is the only var that should be publicly expose :fn functionality
@@ -804,6 +845,7 @@
           :ui/select-theme-color
           :ui/goto-plugins
           :ui/install-plugins-from-file
+          :ui/install-plugin-from-github
           :editor/toggle-open-blocks
           :ui/clear-all-notifications
           :git/commit
@@ -812,6 +854,10 @@
           :dev/show-block-ast
           :dev/show-page-data
           :dev/show-page-ast
+          :dev/export-block-data
+          :dev/export-page-data
+          :dev/export-graph-ontology-data
+          :dev/import-edn-data
           :dev/replace-graph-with-db-file
           :dev/validate-db
           :ui/customize-appearance])
@@ -1000,6 +1046,10 @@
      :dev/show-block-ast
      :dev/show-page-data
      :dev/show-page-ast
+     :dev/export-block-data
+     :dev/export-page-data
+     :dev/export-graph-ontology-data
+     :dev/import-edn-data
      :dev/replace-graph-with-db-file
      :dev/validate-db
      :ui/clear-all-notifications]
