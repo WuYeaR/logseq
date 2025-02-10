@@ -121,9 +121,11 @@
                      [property-map v])))))
        (db-property-build/build-property-values-tx-m new-block)))
 
-(defn- extract-content-refs
-  "Extracts basic refs from :block/title like `[[foo]]`. Adding more ref support would
-  require parsing each block with mldoc and extracting with text/extract-refs-from-mldoc-ast"
+(defn extract-content-refs
+  "Extracts basic refs from :block/title like `[[foo]]` or `[[UUID]]`. Can't
+  use db-content/get-matched-ids because of named ref support.  Adding more ref
+  support would require parsing each block with mldoc and extracting with
+  text/extract-refs-from-mldoc-ast"
   [s]
   ;; FIXME: Better way to ignore refs inside a macro
   (if (string/starts-with? s "{{")
@@ -131,8 +133,8 @@
     (map second (re-seq page-ref/page-ref-re s))))
 
 (defn- ->block-tx [{:keys [build/properties] :as m} page-uuids all-idents page-id
-                   {properties-config :properties :keys [build-existing-tx? existing-page?]}]
-  (let [build-existing-tx?' (and build-existing-tx? (::existing-block? (meta m)) existing-page?)
+                   {properties-config :properties :keys [build-existing-tx?]}]
+  (let [build-existing-tx?' (and build-existing-tx? (::existing-block? (meta m)) (not (:build/keep-uuid? m)))
         block (if build-existing-tx?'
                 (select-keys m [:block/uuid])
                 {:db/id (new-db-id)
@@ -140,7 +142,7 @@
                  :block/order (db-order/gen-key nil)
                  :block/parent (or (:block/parent m) {:db/id page-id})})
         pvalue-tx-m (->property-value-tx-m block properties properties-config all-idents)
-        ref-names (extract-content-refs (:block/title m))]
+        ref-strings (extract-content-refs (:block/title m))]
     (cond-> []
       ;; Place property values first since they are referenced by block
       (seq pvalue-tx-m)
@@ -154,12 +156,16 @@
                    (when-let [tags (:build/tags m)]
                      {:block/tags (mapv #(hash-map :db/ident (get-ident all-idents %))
                                         tags)})
-                   (when (seq ref-names)
-                     (let [block-refs (mapv #(hash-map :block/uuid
-                                                       (or (page-uuids %)
-                                                           (throw (ex-info (str "No uuid for page ref name" (pr-str %)) {})))
-                                                       :block/title %)
-                                            ref-names)]
+                   (when (seq ref-strings)
+                     ;; Use maps for uuids to avoid out of order tx issues
+                     (let [block-refs (mapv #(if-let [uuid' (parse-uuid %)]
+                                               (hash-map :block/uuid uuid')
+                                               (hash-map :block/uuid
+                                                         (or
+                                                          (page-uuids %)
+                                                          (throw (ex-info (str "No uuid for page ref name" (pr-str %)) {})))
+                                                         :block/title %))
+                                            ref-strings)]
                        {:block/title (db-content/title-ref->id-ref (:block/title m) block-refs {:replace-tag? false})
                         :block/refs block-refs})))))))
 
@@ -204,10 +210,10 @@
 
 (defn- build-properties-tx [properties page-uuids all-idents {:keys [build-existing-tx?]}]
   (let [properties' (if build-existing-tx?
-                     (->> properties
-                          (remove #(:block/uuid (val %)))
-                          (into {}))
-                     properties)
+                      (->> properties
+                           (remove (fn [[_ v]] (and (:block/uuid v) (not (:build/keep-uuid? v)))))
+                           (into {}))
+                      properties)
         property-db-ids (->> (keys properties')
                              (map #(vector % (new-db-id)))
                              (into {}))
@@ -218,10 +224,10 @@
 
 (defn- build-classes-tx [classes properties-config uuid-maps all-idents {:keys [build-existing-tx?]}]
   (let [classes' (if build-existing-tx?
-                  (->> classes
-                       (remove #(:block/uuid (val %)))
-                       (into {}))
-                  classes)
+                   (->> classes
+                        (remove (fn [[_ v]] (and (:block/uuid v) (not (:build/keep-uuid? v)))))
+                        (into {}))
+                   classes)
         class-db-ids (->> (keys classes')
                           (map #(vector % (new-db-id)))
                           (into {}))
@@ -274,14 +280,16 @@
                         [:block/title :string]
                         [:build/children {:optional true} [:vector [:ref ::block]]]
                         [:build/properties {:optional true} User-properties]
-                        [:build/tags {:optional true} [:vector Class]]]}}
+                        [:build/tags {:optional true} [:vector Class]]
+                        [:build/keep-uuid? {:optional true} :boolean]]}}
    [:page [:and
            [:map
             [:block/uuid {:optional true} :uuid]
             [:block/title {:optional true} :string]
             [:build/journal {:optional true} :int]
             [:build/properties {:optional true} User-properties]
-            [:build/tags {:optional true} [:vector Class]]]
+            [:build/tags {:optional true} [:vector Class]]
+            [:build/keep-uuid? {:optional true} :boolean]]
            [:fn {:error/message ":block/title, :block/uuid or :build/journal required"
                  :error/path [:block/title]}
             (fn [m]
@@ -301,7 +309,8 @@
                [:value [:or :string :double]]
                [:uuid {:optional true} :uuid]
                [:icon {:optional true} :map]]]]
-    [:build/property-classes {:optional true} [:vector Class]]]])
+    [:build/property-classes {:optional true} [:vector Class]]
+    [:build/keep-uuid? {:optional true} :boolean]]])
 
 (def Classes
   [:map-of
@@ -309,7 +318,8 @@
    [:map
     [:build/properties {:optional true} User-properties]
     [:build/class-parent {:optional true} Class]
-    [:build/class-properties {:optional true} [:vector Property]]]])
+    [:build/class-properties {:optional true} [:vector Property]]
+    [:build/keep-uuid? {:optional true} :boolean]]])
 
 (def Options
   [:map
@@ -380,6 +390,26 @@
             "Class and property db-idents have no overlap")
     all-idents))
 
+(defn- build-page-tx [page all-idents page-uuids properties]
+  (let [page' (dissoc page :build/tags :build/properties)
+        pvalue-tx-m (->property-value-tx-m page' (:build/properties page) properties all-idents)]
+    (cond-> []
+      (seq pvalue-tx-m)
+      (into (mapcat #(if (set? %) % [%]) (vals pvalue-tx-m)))
+      true
+      (conj
+       (block-with-timestamps
+        (merge
+         page'
+         (when (seq (:build/properties page))
+           (->block-properties (merge (:build/properties page) (db-property-build/build-properties-with-ref-values pvalue-tx-m))
+                               page-uuids
+                               all-idents))
+         (when-let [tags (:build/tags page)]
+           {:block/tags (-> (mapv #(hash-map :db/ident (get-ident all-idents %))
+                                  tags)
+                            (conj :logseq.class/Page))})))))))
+
 (defn- build-pages-and-blocks-tx
   [pages-and-blocks all-idents page-uuids {:keys [page-id-fn properties build-existing-tx?]
                                            :or {page-id-fn :db/id}
@@ -387,7 +417,8 @@
   (vec
    (mapcat
     (fn [{:keys [page blocks]}]
-      (let [page' (if (and build-existing-tx? (not (::new-page? (meta page))))
+      (let [ignore-page-tx? (and build-existing-tx? (not (::new-page? (meta page))) (not (:build/keep-uuid? page)))
+            page' (if ignore-page-tx?
                     page
                     (merge
                      ;; TODO: Use sqlite-util/build-new-page
@@ -395,37 +426,19 @@
                       :block/title (or (:block/title page) (string/capitalize (:block/name page)))
                       :block/name (or (:block/name page) (common-util/page-name-sanity-lc (:block/title page)))
                       :block/tags #{:logseq.class/Page}}
-                     (dissoc page :build/properties :db/id :block/name :block/title :build/tags)))
+                     (dissoc page :db/id :block/name :block/title)))
             page-id-fn' (if (and build-existing-tx? (not (::new-page? (meta page))))
-                         #(vector :block/uuid (:block/uuid %))
-                         page-id-fn)
-            opts' (assoc opts :existing-page? (and build-existing-tx? (not (::new-page? (meta page)))))]
+                          #(vector :block/uuid (:block/uuid %))
+                          page-id-fn)]
         (into
          ;; page tx
-         (if (and build-existing-tx? (not (::new-page? (meta page))))
-           ;; Ignore existing pages until there's a use case for updating them
+         (if ignore-page-tx?
            []
-           (let [pvalue-tx-m (->property-value-tx-m page' (:build/properties page) properties all-idents)]
-             (cond-> []
-               (seq pvalue-tx-m)
-               (into (mapcat #(if (set? %) % [%]) (vals pvalue-tx-m)))
-               true
-               (conj
-                (block-with-timestamps
-                 (merge
-                  page'
-                  (when (seq (:build/properties page))
-                    (->block-properties (merge (:build/properties page) (db-property-build/build-properties-with-ref-values pvalue-tx-m))
-                                        page-uuids
-                                        all-idents))
-                  (when-let [tags (:build/tags page)]
-                    {:block/tags (-> (mapv #(hash-map :db/ident (get-ident all-idents %))
-                                           tags)
-                                     (conj :logseq.class/Page))})))))))
+           (build-page-tx page' all-idents page-uuids properties))
          ;; blocks tx
          (reduce (fn [acc m]
                    (into acc
-                         (->block-tx m page-uuids all-idents (page-id-fn' page') opts')))
+                         (->block-tx m page-uuids all-idents (page-id-fn' page') opts)))
                  []
                  blocks))))
     pages-and-blocks)))
@@ -452,6 +465,9 @@
      :block-props-tx block-props-tx}))
 
 (defn- add-new-pages-from-refs
+  "This allows top-level page blocks to contain [[named]] refs and auto create
+  those pages.  This is for convenience. For robust EDN it's recommended
+  to use [[UUID]] refs and handle page creation with initial build-blocks-tx options"
   [pages-and-blocks]
   (let [existing-pages (->> pages-and-blocks (keep #(get-in % [:page :block/title])) set)
         new-pages-from-refs
@@ -460,6 +476,7 @@
               (fn [{:keys [blocks]}]
                 (->> blocks
                      (mapcat #(extract-content-refs (:block/title %)))
+                     (remove common-util/uuid-string?)
                      (remove existing-pages))))
              distinct
              (map #(hash-map :page {:block/title %})))]
@@ -495,10 +512,10 @@
                       (with-meta block {::existing-block? true})
                       (assoc block :block/uuid (random-uuid)))
              block'' (cond-> block'
-                      true
-                      (dissoc :build/children)
-                      parent-id
-                      (assoc :block/parent {:db/id [:block/uuid parent-id]}))
+                       true
+                       (dissoc :build/children)
+                       parent-id
+                       (assoc :block/parent {:db/id [:block/uuid parent-id]}))
              children (:build/children block)
              child-maps (when children (expand-build-children children (:block/uuid block'')))]
          (cons block'' child-maps)))
@@ -525,7 +542,7 @@
                                            (merge {:block/journal-day date-int
                                                    :block/title page-name
                                                    :block/uuid
-                                                   (common-uuid/gen-uuid :journal-page-uuid date-int)
+                                                   (or (:block/uuid page) (common-uuid/gen-uuid :journal-page-uuid date-int))
                                                    :block/tags :logseq.class/Journal})
                                            (with-meta {::new-page? true})))))
                            m))]
@@ -624,11 +641,13 @@
        * :build/journal - Define a journal pages as an integer e.g. 20240101 is Jan 1, 2024. :block/title
          is not required if using this since it generates one
        * :build/properties - Defines properties on a page
+       * :build/keep-uuid? - Keeps :block/uuid because another block depends on it
      * :blocks - This is a vec of datascript attribute maps for blocks with
        :block/title required. e.g. `{:block/title \"bar\"}`. Additional keys available:
        * :build/children - A vec of blocks that are nested (indented) under the current block.
           Allows for outlines to be expressed to whatever depth
        * :build/properties - Defines properties on a block
+       * :build/keep-uuid? - Keeps :block/uuid because another block depends on it
    * :properties - This is a map to configure properties where the keys are property name keywords
      and the values are maps of datascript attributes e.g. `{:logseq.property/type :checkbox}`.
      Additional keys available:
@@ -637,18 +656,21 @@
      * :build/property-classes - Vec of class name keywords. Defines a property's range classes
      * :build/properties-ref-types - Map of internal ref types to public ref types that are valid only for this property.
        Useful when remapping value ref types e.g. for :logseq.property/default-value
+     * :build/keep-uuid? - Keeps :block/uuid because another block depends on it
    * :classes - This is a map to configure classes where the keys are class name keywords
      and the values are maps of datascript attributes e.g. `{:block/title \"Foo\"}`.
      Additional keys available:
      * :build/properties - Define properties on a class page
      * :build/class-parent - Add a class parent by its keyword name
      * :build/class-properties - Vec of property name keywords. Defines properties that a class gives to its objects
+     * :build/keep-uuid? - Keeps :block/uuid because another block depends on it
   * :graph-namespace - namespace to use for db-ident creation. Useful when importing an ontology
   * :auto-create-ontology? - When set to true, creates properties and classes from their use.
     See auto-create-ontology for more details
   * :build-existing-tx? - When set to true, blocks, pages, properties and classes with :block/uuid are treated as
      existing in DB and are skipped for creation. This is useful for building tx on existing DBs e.g. for importing.
-     Blocks are updated with any attributes passed to it while all other node types are ignored for update.
+     Blocks are updated with any attributes passed to it while all other node types are ignored for update unless
+     :build/keep-uuid? is set.
   * :page-id-fn - custom fn that returns ent lookup id for page refs e.g. `[:block/uuid X]`
     Default is :db/id
 
