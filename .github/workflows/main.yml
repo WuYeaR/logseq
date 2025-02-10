@@ -163,7 +163,7 @@ jobs:
           SENTRY_PROJECT: logseq
 
       - name: Cache Static File
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: static
           path: static
@@ -217,7 +217,7 @@ jobs:
           mv static\out\make\squirrel.windows\x64\*.exe    builds\Logseq-win-x64-${{ steps.ref.outputs.version }}.exe
 
       - name: Upload Artifact for Code Signing
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: logseq-win64-unsigned-builds
           path: builds
@@ -231,7 +231,7 @@ jobs:
           mv static\out\make\squirrel.windows\x64\RELEASES builds\RELEASES
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: logseq-win64-builds
           path: builds
