@@ -70,7 +70,7 @@
                       (common-util/fast-remove-nils)
                       (remove empty?))
          delete-blocks-tx (when-not (string? repo-or-conn)
-                            (delete-blocks/update-refs-and-macros @repo-or-conn tx-data tx-meta))
+                            (delete-blocks/update-refs-history-and-macros @repo-or-conn tx-data tx-meta))
          tx-data (concat tx-data delete-blocks-tx)]
 
      ;; Ensure worker can handle the request sequentially (one by one)
@@ -524,6 +524,14 @@
   [db]
   (when db (get-key-value db :logseq.kv/graph-uuid)))
 
+(defn get-graph-schema-version
+  [db]
+  (when db (get-key-value db :logseq.kv/schema-version)))
+
+(defn get-graph-remote-schema-version
+  [db]
+  (when db (get-key-value db :logseq.kv/remote-schema-version)))
+
 ;; File based fns
 (defn get-namespace-pages
   "Accepts both sanitized and unsanitized namespaces"
@@ -590,7 +598,7 @@
 (defn get-classes-parents
   [tags]
   (let [tags' (filter class? tags)
-        result (mapcat get-page-parents tags' {:node-class? true})]
+        result (mapcat #(get-page-parents % {:node-class? true}) tags')]
     (set result)))
 
 (defn class-instance?
