@@ -1,6 +1,7 @@
 (ns frontend.worker.rtc.malli-schema
   "Malli schema for rtc"
-  (:require [logseq.db.frontend.malli-schema :as db-malli-schema]
+  (:require [lambdaisland.glogi :as log]
+            [logseq.db.frontend.malli-schema :as db-malli-schema]
             [logseq.db.frontend.schema :as db-schema]
             [malli.core :as m]
             [malli.transform :as mt]
@@ -94,7 +95,6 @@
    [:t {:optional true} :int]
    [:t-before {:optional true} :int]
    [:s3-presign-url {:optional true} :string]
-   [:server-schema-version {:optional true} :int]
    [:server-builtin-db-idents {:optional true} [:set :keyword]]
    [:server-only-db-ident-blocks {:optional true} [:maybe :string] ;;transit
     ]
@@ -211,7 +211,7 @@
      ["grant-access" [:map]]
      ["get-graph-skeleton"
       [:map
-       [:server-schema-version :int]
+       [:server-schema-version :string]
        [:server-builtin-db-idents [:set :keyword]]]]
      ["presign-put-temp-s3-obj" [:map]]
      ["get-users-info"
@@ -322,6 +322,7 @@
       ["delete-assets"
        [:map
         [:graph-uuid :uuid]
+        [:schema-version db-schema/major-schema-version-string-schema]
         [:asset-uuids [:sequential :uuid]]]]
       ["get-user-devices"
        [:map]]
@@ -354,5 +355,5 @@
                                                       (mt/key-transformer {:encode m/-keyword->string}))))
 (def data-to-ws-coercer (m/coercer data-to-ws-schema mt/string-transformer nil
                                    #(do
-                                      (prn ::data-to-ws-schema %)
+                                      (log/error ::data-to-ws-schema %)
                                       (m/-fail! ::data-to-ws-schema %))))

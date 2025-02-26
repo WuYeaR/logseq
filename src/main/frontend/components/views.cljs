@@ -3,6 +3,7 @@
   (:require [cljs-bean.core :as bean]
             [cljs-time.coerce :as tc]
             [cljs-time.core :as t]
+            [cljs-time.format :as tf]
             [clojure.set :as set]
             [clojure.string :as string]
             [datascript.impl.entity :as de]
@@ -17,7 +18,9 @@
             [frontend.date :as date]
             [frontend.db :as db]
             [frontend.db-mixins :as db-mixins]
+            [frontend.db.async :as db-async]
             [frontend.handler.db-based.property :as db-property-handler]
+            [frontend.handler.editor :as editor-handler]
             [frontend.handler.property :as property-handler]
             [frontend.handler.property.util :as pu]
             [frontend.handler.ui :as ui-handler]
@@ -27,12 +30,13 @@
             [frontend.ui :as ui]
             [frontend.util :as util]
             [goog.dom :as gdom]
+            [logseq.common.config :as common-config]
             [logseq.db :as ldb]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.property.type :as db-property-type]
-            [logseq.shui.popup.core :as shui-popup]
             [logseq.shui.table.core :as table-core]
             [logseq.shui.ui :as shui]
+            [promesa.core :as p]
             [rum.core :as rum]))
 
 (defn- get-latest-entity
@@ -97,51 +101,43 @@
                   (contains? (set (map :db/id (:logseq.property.table/pinned-columns view-entity)))
                              (:db/id property)))
         sub-content (fn [{:keys [id]}]
-                      (let [[open? set-open!] (rum/use-state false)]
-                        [:<>
-                         (when property
-                           (shui/dropdown-menu-sub
-                            {:open open?
-                             :on-open-change (fn [v]
-                                               (when (or (true? v)
-                                                         (not (or (some-> @shui-popup/*last-show-target
-                                                                          (.closest "[data-icon-picker=true]"))
-                                                                  (js/document.querySelector ".cp__emoji-icon-picker"))))
-                                                 (set-open! v)))}
-                            (shui/dropdown-menu-sub-trigger
-                             [:div.flex.flex-row.items-center.gap-1
-                              (ui/icon "settings" {:size 15})
-                              [:div "Configure"]])
-                            (shui/dropdown-menu-sub-content
-                             [:div.ls-property-dropdown-editor.-m-1
-                              (property-config/dropdown-editor property nil {})])))
+                      [:<>
+                       (shui/dropdown-menu-item
+                        {:key "asc"
+                         :on-click #(column-set-sorting! sorting column true)}
+                        [:div.flex.flex-row.items-center.gap-1
+                         (ui/icon "arrow-up" {:size 15})
+                         [:div "Sort ascending"]])
+                       (shui/dropdown-menu-item
+                        {:key "desc"
+                         :on-click #(column-set-sorting! sorting column false)}
+                        [:div.flex.flex-row.items-center.gap-1
+                         (ui/icon "arrow-down" {:size 15})
+                         [:div "Sort descending"]])
+                       (when property
                          (shui/dropdown-menu-item
-                          {:key "asc"
-                           :on-click #(column-set-sorting! sorting column true)}
+                          {:on-click #(shui/popup-show! (.-target %)
+                                                        (fn []
+                                                          [:div.ls-property-dropdown-editor.-m-1
+                                                           (property-config/dropdown-editor property nil {})])
+                                                        {:align "start"})}
                           [:div.flex.flex-row.items-center.gap-1
-                           (ui/icon "arrow-up" {:size 15})
-                           [:div "Sort ascending"]])
+                           (ui/icon "adjustments" {:size 15}) "Configure"]))
+                       (when property
                          (shui/dropdown-menu-item
-                          {:key "desc"
-                           :on-click #(column-set-sorting! sorting column false)}
+                          {:on-click (fn [_e]
+                                       (if pinned?
+                                         (db-property-handler/delete-property-value! (:db/id view-entity)
+                                                                                     :logseq.property.table/pinned-columns
+                                                                                     (:db/id property))
+                                         (property-handler/set-block-property! (state/get-current-repo)
+                                                                               (:db/id view-entity)
+                                                                               :logseq.property.table/pinned-columns
+                                                                               (:db/id property)))
+                                       (shui/popup-hide! id))}
                           [:div.flex.flex-row.items-center.gap-1
-                           (ui/icon "arrow-down" {:size 15})
-                           [:div "Sort descending"]])
-                         (when property
-                           (shui/dropdown-menu-item
-                            {:on-click (fn [_e]
-                                         (if pinned?
-                                           (db-property-handler/delete-property-value! (:db/id view-entity)
-                                                                                       :logseq.property.table/pinned-columns
-                                                                                       (:db/id property))
-                                           (property-handler/set-block-property! (state/get-current-repo)
-                                                                                 (:db/id view-entity)
-                                                                                 :logseq.property.table/pinned-columns
-                                                                                 (:db/id property)))
-                                         (shui/popup-hide! id))}
-                            [:div.flex.flex-row.items-center.gap-1
-                             (ui/icon "pin" {:size 15})
-                             [:div (if pinned? "Unpin" "Pin")]]))]))]
+                           (ui/icon "pin" {:size 15})
+                           [:div (if pinned? "Unpin" "Pin")]]))])]
     (shui/button
      {:variant "text"
       :class "h-8 !pl-4 !px-2 !py-0 hover:text-foreground w-full justify-start"
@@ -320,51 +316,57 @@
 
 (rum/defc more-actions
   [view-entity columns {:keys [column-visible? column-toggle-visibility]}]
-  (shui/dropdown-menu
-   (shui/dropdown-menu-trigger
-    {:asChild true}
-    (shui/button
-     {:variant "ghost"
-      :class "text-muted-foreground !px-1"
-      :size :sm}
-     (ui/icon "dots")))
-   (shui/dropdown-menu-content
-    {:align "end"}
-    (shui/dropdown-menu-group
-     (shui/dropdown-menu-sub
-      (shui/dropdown-menu-sub-trigger
-       "Columns visibility")
-      (shui/dropdown-menu-sub-content
-       (for [column (remove #(or (false? (:column-list? %))
-                                 (:disable-hide? %)) columns)]
-         (shui/dropdown-menu-checkbox-item
-          {:key (str (:id column))
-           :className "capitalize"
-           :checked (column-visible? column)
-           :onCheckedChange #(column-toggle-visibility column %)
-           :onSelect (fn [e] (.preventDefault e))}
-          (:name column)))))
-     (shui/dropdown-menu-sub
-      (shui/dropdown-menu-sub-trigger
-       "Group by")
-      (shui/dropdown-menu-sub-content
-       (for [column (filter (fn [column]
-                              (when (:id column)
-                                (when-let [p (db/entity (:id column))]
-                                  (and (not (db-property/many? p))
-                                       (contains? #{:default :number :checkbox :url :node :date}
-                                              (:logseq.property/type p)))))) columns)]
-         (shui/dropdown-menu-checkbox-item
-          {:key (str (:id column))
-           :className "capitalize"
-           :checked (= (:id column) (:db/ident (:logseq.property.view/group-by-property view-entity)))
-           :onCheckedChange (fn [result]
-                              (if result
-                                (db-property-handler/set-block-property! (:db/id view-entity) :logseq.property.view/group-by-property
-                                                                         (:db/id (db/entity (:id column))))
-                                (db-property-handler/remove-block-property! (:db/id view-entity) :logseq.property.view/group-by-property)))
-           :onSelect (fn [e] (.preventDefault e))}
-          (:name column)))))))))
+  (let [display-type (:db/ident (:logseq.property.view/type view-entity))
+        table? (= display-type :logseq.property.view/type.table)
+        columns' (filter (fn [column]
+                           (when (:id column)
+                             (when-let [p (db/entity (:id column))]
+                               (and (not (db-property/many? p))
+                                    (contains? #{:default :number :checkbox :url :node :date}
+                                               (:logseq.property/type p)))))) columns)]
+    (when (or table? (seq columns'))
+      (shui/dropdown-menu
+       (shui/dropdown-menu-trigger
+        {:asChild true}
+        (shui/button
+         {:variant "ghost"
+          :class "text-muted-foreground !px-1"
+          :size :sm}
+         (ui/icon "dots" {:size 15})))
+       (shui/dropdown-menu-content
+        {:align "end"}
+        (shui/dropdown-menu-group
+         (when table?
+           (shui/dropdown-menu-sub
+            (shui/dropdown-menu-sub-trigger
+             "Columns visibility")
+            (shui/dropdown-menu-sub-content
+             (for [column (remove #(or (false? (:column-list? %))
+                                       (:disable-hide? %)) columns)]
+               (shui/dropdown-menu-checkbox-item
+                {:key (str (:id column))
+                 :className "capitalize"
+                 :checked (column-visible? column)
+                 :onCheckedChange #(column-toggle-visibility column %)
+                 :onSelect (fn [e] (.preventDefault e))}
+                (:name column))))))
+         (when (seq columns')
+           (shui/dropdown-menu-sub
+            (shui/dropdown-menu-sub-trigger
+             "Group by")
+            (shui/dropdown-menu-sub-content
+             (for [column columns']
+               (shui/dropdown-menu-checkbox-item
+                {:key (str (:id column))
+                 :className "capitalize"
+                 :checked (= (:id column) (:db/ident (:logseq.property.view/group-by-property view-entity)))
+                 :onCheckedChange (fn [result]
+                                    (if result
+                                      (db-property-handler/set-block-property! (:db/id view-entity) :logseq.property.view/group-by-property
+                                                                               (:db/id (db/entity (:id column))))
+                                      (db-property-handler/remove-block-property! (:db/id view-entity) :logseq.property.view/group-by-property)))
+                 :onSelect (fn [e] (.preventDefault e))}
+                (:name column))))))))))))
 
 (defn- get-column-size
   [column sized-columns]
@@ -555,23 +557,13 @@
         (action-bar table selected-rows option)]))))
 
 (rum/defc row-cell < rum/static
-  [table row column render cell-opts idx first-col-rendered? set-first-col-rendered!]
-  (let [primary-key? (or (= idx 1) (= (:id column) :block/title))]
-    (when primary-key?
-      (hooks/use-effect!
-       (fn []
-         (let [timeout (js/setTimeout #(set-first-col-rendered! true) 0)]
-           #(js/clearTimeout timeout)))
-       []))
-
-    (shui/table-cell cell-opts
-                     (when (or primary-key? first-col-rendered?)
-                       (render table row column)))))
+  [table row column render cell-opts]
+  (shui/table-cell cell-opts
+                   (render table row column)))
 
 (rum/defc table-row-inner < rum/static
   [{:keys [row-selected?] :as table} row props {:keys [show-add-property?]}]
-  (let [[first-col-rendered? set-first-col-rendered!] (rum/use-state false)
-        pinned-columns (get-in table [:state :pinned-columns])
+  (let [pinned-columns (get-in table [:state :pinned-columns])
         unpinned (get-in table [:state :unpinned-columns])
         unpinned-columns (if show-add-property?
                            (conj (vec unpinned)
@@ -579,9 +571,8 @@
                                   :cell (fn [_table _row _column])})
                            unpinned)
         sized-columns (get-in table [:state :sized-columns])
-        row-cell-f (fn [idx column]
-                     (let [idx (inc idx)
-                           id (str (:id row) "-" (:id column))
+        row-cell-f (fn [column]
+                     (let [id (str (:id row) "-" (:id column))
                            render (get column :cell)
                            width (get-column-size column sized-columns)
                            select? (= (:id column) :select)
@@ -592,16 +583,16 @@
                                       :style {:width width
                                               :min-width width}}]
                        (when render
-                         (row-cell table row column render cell-opts idx first-col-rendered? set-first-col-rendered!))))]
+                         (row-cell table row column render cell-opts))))]
     (shui/table-row
      (merge
       props
       {:key (str (:id row))
        :data-state (when (row-selected? row) "selected")})
      [:div.sticky-columns.flex.flex-row
-      (map-indexed row-cell-f pinned-columns)]
+      (map row-cell-f pinned-columns)]
      [:div.flex.flex-row
-      (map-indexed row-cell-f unpinned-columns)])))
+      (map row-cell-f unpinned-columns)])))
 
 (rum/defc table-row < rum/reactive db-mixins/query
   [table row props option]
@@ -641,7 +632,7 @@
         :class "text-muted-foreground !px-1"
         :size :sm
         :on-click #(set-show-input! true)}
-       (ui/icon "search")))))
+       (ui/icon "search" {:size 15})))))
 
 (defn- get-property-values
   [rows property]
@@ -665,7 +656,11 @@
    (contains? #{:block/created-at :block/updated-at} (:db/ident property))))
 
 (def timestamp-options
-  [{:value "1 week ago"
+  [{:value "1 day ago"
+    :label "1 day ago"}
+   {:value "3 days ago"
+    :label "3 days ago"}
+   {:value "1 week ago"
     :label "1 week ago"}
    {:value "1 month ago"
     :label "1 month ago"}
@@ -673,25 +668,29 @@
     :label "3 months ago"}
    {:value "1 year ago"
     :label "1 year ago"}
-   ;; TODO: support date picker
-   ;; {:value "Custom time"
-   ;;  :label "Custom time"}
-   ])
+   {:value "Custom date"
+    :label "Custom date"}])
 
 (defn- get-timestamp
   [value]
   (let [now (t/now)
         f t/minus]
-    (case value
-      "1 week ago"
-      (tc/to-long (f now (t/weeks 1)))
-      "1 month ago"
-      (tc/to-long (f now (t/months 1)))
-      "3 months ago"
-      (tc/to-long (f now (t/months 3)))
-      "1 year ago"
-      (tc/to-long (f now (t/years 1)))
-      nil)))
+    (if (string? value)
+      (case value
+        "1 day ago"
+        (tc/to-long (f now (t/days 1)))
+        "3 days ago"
+        (tc/to-long (f now (t/days 3)))
+        "1 week ago"
+        (tc/to-long (f now (t/weeks 1)))
+        "1 month ago"
+        (tc/to-long (f now (t/months 1)))
+        "3 months ago"
+        (tc/to-long (f now (t/months 3)))
+        "1 year ago"
+        (tc/to-long (f now (t/years 1)))
+        nil)
+      (tc/to-long (tc/to-date value)))))
 
 (rum/defc filter-property < rum/static
   [columns {:keys [data-fns] :as table}]
@@ -706,7 +705,7 @@
                      {:label (:name column)
                       :value column}) columns)
         option {:input-default-placeholder "Filter"
-                :input-opts {:class "!px-3 !py-1"}
+                :input-opts {:class "!px-2 !py-1"}
                 :items items
                 :extract-fn :label
                 :extract-chosen-fn :value
@@ -734,11 +733,23 @@
                  (merge option
                         {:items timestamp-options
                          :input-default-placeholder (if property (:block/title property) "Select")
-                         :on-chosen (fn [value]
+                         :on-chosen (fn [value _ _ e]
                                       (shui/popup-hide!)
-                                      (let [filters' (conj (:filters filters) [(:db/ident property) :after value])]
-                                        (set-filters! {:or? (:or? filters)
-                                                       :filters filters'})))})
+                                      (let [set-filter-fn (fn [value]
+                                                            (let [filters' (conj (:filters filters) [(:db/ident property) :after value])]
+                                                              (set-filters! {:or? (:or? filters)
+                                                                             :filters filters'})))]
+                                        (if (= value "Custom date")
+                                          (shui/popup-show!
+                                           (.-target e)
+                                           (ui/nlp-calendar
+                                            {:initial-focus true
+                                             :datetime? false
+                                             :on-day-click (fn [value]
+                                                             (set-filter-fn value)
+                                                             (shui/popup-hide!))})
+                                           {})
+                                          (set-filter-fn value))))})
                  property
                  (if (= :checkbox (:logseq.property/type property))
                    (let [items [{:value true :label "true"}
@@ -927,16 +938,28 @@
                  :items items
                  :extract-fn :label
                  :extract-chosen-fn :value
-                 :on-chosen (fn [value _selected? selected]
+                 :on-chosen (fn [value _selected? selected e]
                               (when-not many?
                                 (shui/popup-hide!))
                               (let [value' (if many? selected value)
-                                    new-filters (update filters :filters
-                                                        (fn [col]
-                                                          (update col idx
-                                                                  (fn [[property operator _value]]
-                                                                    [property operator value']))))]
-                                (set-filters! new-filters)))}
+                                    set-filters-fn (fn [value']
+                                                     (let [new-filters (update filters :filters
+                                                                               (fn [col]
+                                                                                 (update col idx
+                                                                                         (fn [[property operator _value]]
+                                                                                           [property operator value']))))]
+                                                       (set-filters! new-filters)))]
+                                (if (= value "Custom date")
+                                  (shui/popup-show!
+                                   (.-target e)
+                                   (ui/nlp-calendar
+                                    {:initial-focus true
+                                     :datetime? false
+                                     :on-day-click (fn [value]
+                                                     (set-filters-fn value)
+                                                     (shui/popup-hide!))})
+                                   {})
+                                  (set-filters-fn value'))))}
                  many?
                  (assoc
                   :multiple-choices? true
@@ -951,6 +974,10 @@
        (let [value (cond
                      (uuid? value)
                      (db/entity [:block/uuid value])
+                     (instance? js/Date value)
+                     (some->> (tc/to-date value)
+                              (t/to-default-time-zone)
+                              (tf/unparse (tf/formatter "yyyy-MM-dd")))
                      (and (coll? value) (every? uuid? value))
                      (set (map #(db/entity [:block/uuid %]) value))
                      :else
@@ -1219,55 +1246,58 @@
        (set-sized-columns! sized-columns)
        (property-handler/set-block-property! repo (:db/id entity) :logseq.property.table/sized-columns sized-columns))}))
 
+(rum/defc table-body < rum/static
+  [table option rows *scroller-ref *rows-wrap set-items-rendered!]
+  (ui/virtualized-list
+   {:ref #(reset! *scroller-ref %)
+    :custom-scroll-parent (or (some-> (rum/deref *rows-wrap) (.closest ".sidebar-item-list"))
+                              (gdom/getElement "main-content-container"))
+    :increase-viewport-by {:top 300 :bottom 300}
+    :compute-item-key (fn [idx]
+                        (let [block (nth rows idx)]
+                          (str "table-row-" (:db/id block))))
+    :skipAnimationFrameInResizeObserver true
+    :total-count (count rows)
+    :item-content (fn [idx]
+                    (let [row (nth rows idx)]
+                      (table-row table row {} option)))
+    :items-rendered (fn [props]
+                      (when (seq props)
+                        (set-items-rendered! true)))}))
+
 (rum/defc table-view < rum/static
   [table option row-selection *scroller-ref]
   (let [selected-rows (shui/table-get-selection-rows row-selection (:rows table))
-        [ready? set-ready?] (rum/use-state false)
-        *rows-wrap (rum/use-ref nil)]
-
-    (hooks/use-effect!
-     (fn [] (set-ready? true))
-     [])
-
+        *rows-wrap (rum/use-ref nil)
+        [items-rendered? set-items-rendered!] (hooks/use-state false)]
     (shui/table
      (let [rows (:rows table)]
        [:div.ls-table-rows.content.overflow-x-auto.force-visible-scrollbar
         {:ref *rows-wrap}
-        (when ready?
-          [:div.relative
-           (table-header table option selected-rows)
+        [:div.relative
+         (table-header table option selected-rows)
 
-           (ui/virtualized-list
-            {:ref #(reset! *scroller-ref %)
-             :custom-scroll-parent (or (some-> (rum/deref *rows-wrap) (.closest ".sidebar-item-list"))
-                                       (gdom/getElement "main-content-container"))
-             :increase-viewport-by {:top 300 :bottom 300}
-             :compute-item-key (fn [idx]
-                                 (let [block (nth rows idx)]
-                                   (str "table-row-" (:db/id block))))
-             :total-count (count rows)
-             :item-content (fn [idx]
-                             (let [row (nth rows idx)]
-                               (table-row table row {} option)))})
+         (table-body table option rows *scroller-ref *rows-wrap set-items-rendered!)
 
-           (when (get-in table [:data-fns :add-new-object!])
-             (shui/table-footer (add-new-row table)))])]))))
+         (when (and (get-in table [:data-fns :add-new-object!]) (or (empty? rows) items-rendered?))
+           (shui/table-footer (add-new-row table)))]]))))
 
 (rum/defc list-view < rum/static
-  [config view-entity result]
+  [{:keys [config view-feature-type]} view-entity result]
   (when-let [->hiccup (state/get-component :block/->hiccup)]
     (let [group-by-page? (not (every? db/page? result))
           result (if group-by-page?
                    (group-by :block/page result)
-                   result)]
-      (->hiccup result
-                (assoc config
-                       :custom-query? true
-                       :current-block (:db/id view-entity)
-                       :query (:block/title view-entity)
-                       :breadcrumb-show? (if group-by-page? true false)
-                       :group-by-page? group-by-page?
-                       :ref? true)))))
+                   result)
+          config' (cond-> (assoc config
+                                 :current-block (:db/id view-entity)
+                                 :query (:block/title view-entity)
+                                 :breadcrumb-show? (if group-by-page? true false)
+                                 :group-by-page? group-by-page?
+                                 :ref? true)
+                    (= view-feature-type :query-result)
+                    (assoc :query (:block/title view-entity)))]
+      (->hiccup result config'))))
 
 (rum/defc gallery-card-item
   [table view-entity block config]
@@ -1315,7 +1345,7 @@
              new-data (map get-latest-entity data)
              ;; TODO: db support native order-by, limit, offset, 350ms for 40k pages
              data' (table-core/table-sort-rows new-data sorting columns)]
-         (when (not= data' data)
+         (when (and (not= data' data) set-data!)
            (set-data! data'))
          (when (and (:current-page? (:config option)) (seq data) (map? (first data)) (:block/uuid (first data)))
            (ui-handler/scroll-to-anchor-block @*scroller-ref data' gallery?)
@@ -1406,20 +1436,153 @@
   [view-entity table option {:keys [*scroller-ref display-type row-selection]}]
   (case display-type
     :logseq.property.view/type.list
-    (list-view (:config option) view-entity (:rows table))
+    (list-view option view-entity (:rows table))
 
     :logseq.property.view/type.gallery
     (gallery-view (:config option) table view-entity (:rows table) *scroller-ref)
 
     (table-view table option row-selection *scroller-ref)))
 
+(defn- get-views
+  [ent view-feature-type]
+  (let [entity (db/entity (:db/id ent))
+        views (->> (:logseq.property/_view-for entity)
+                   (filter (fn [view]
+                             (= view-feature-type (:logseq.property.view/feature-type view)))))]
+    (ldb/sort-by-order views)))
+
+(defn- create-view!
+  [view-parent view-feature-type]
+  (when-let [page (db/get-case-page common-config/views-page-name)]
+    (p/let [properties (cond->
+                        {:logseq.property/view-for (:db/id view-parent)
+                         :logseq.property.view/feature-type view-feature-type}
+                         (contains? #{:linked-references :unlinked-references} view-feature-type)
+                         (assoc :logseq.property.view/type (:db/id (db/entity :logseq.property.view/type.list))))
+            view-exists? (seq (get-views view-parent view-feature-type))
+            view-title (if view-exists?
+                         ""
+                         (case view-feature-type
+                           :linked-references
+                           "Linked references"
+                           :unlinked-references
+                           "Unlinked references"
+                           :class-objects
+                           "All"
+                           :property-objects
+                           "All"
+                           :all-pages
+                           "All pages"
+                           ""))
+            result (editor-handler/api-insert-new-block! view-title
+                                                         {:page (:block/uuid page)
+                                                          :properties properties})]
+      (db/entity [:block/uuid (:block/uuid result)]))))
+
+(rum/defc views-tab < rum/reactive db-mixins/query
+  [view-parent current-view data {:keys [views set-view-entity! set-views! view-feature-type show-items-count?]} hover?]
+  [:div.views.flex.flex-row.items-center.flex-wrap.gap-2
+   (for [view* views]
+     (let [view (db/sub-block (:db/id view*))
+           current-view? (= (:db/id current-view) (:db/id view))]
+       (shui/button
+        {:variant :text
+         :size :sm
+         :class (str "text-sm px-0 py-0 h-6 " (when-not current-view? "text-muted-foreground"))
+         :on-click (fn [e]
+                     (if (and current-view? (not= (:db/id view) (:db/id view-parent)))
+                       (shui/popup-show!
+                        (.-target e)
+                        (fn []
+                          [:<>
+                           (shui/dropdown-menu-sub
+                            (shui/dropdown-menu-sub-trigger
+                             "Rename")
+                            (shui/dropdown-menu-sub-content
+                             (when-let [block-container-cp (state/get-component :block/container)]
+                               (block-container-cp {} view))))
+                           (shui/dropdown-menu-item
+                            {:key "Delete"
+                             :on-click (fn []
+                                         (p/do!
+                                          (editor-handler/delete-block-aux! view)
+                                          (let [views' (remove (fn [v] (= (:db/id v) (:db/id view))) views)]
+                                            (set-views! views')
+                                            (set-view-entity! (first views'))
+                                            (shui/popup-hide!))))}
+                            "Delete")])
+                        {:as-dropdown? true
+                         :align "start"
+                         :content-props {:onClick shui/popup-hide!}})
+                       (set-view-entity! view)))}
+        (let [display-type (or (:db/ident (get view :logseq.property.view/type))
+                               :logseq.property.view/type.table)]
+          (when-let [icon (:logseq.property/icon (db/entity display-type))]
+            (icon-component/icon icon {:color? true
+                                       :size 15})))
+        (let [title (:block/title view)]
+          (if (= title "")
+            "New view"
+            title))
+        (when show-items-count?
+          [:span.text-muted-foreground.text-xs
+           (count data)]))))
+
+   (shui/button
+    {:variant :text
+     :size :sm
+     :title "Add new view"
+     :class (str "!px-1 -ml-1 text-muted-foreground hover:text-foreground transition-opacity ease-in duration-300 "
+                 (if hover? "opacity-100" "opacity-75"))
+     :on-click (fn []
+                 (p/let [view (create-view! view-parent view-feature-type)]
+                   (set-views! (concat views [view]))))}
+    (ui/icon "plus" {:size 15}))])
+
+(rum/defc view-head < rum/static
+  [view-parent view-entity table columns input sorting
+   set-input! add-new-object!
+   {:keys [view-feature-type title-key additional-actions]
+    :as option}]
+  (let [[hover? set-hover?] (hooks/use-state nil)]
+    [:div.flex.flex-1.flex-wrap.items-center.justify-between.gap-1
+     {:on-mouse-over #(set-hover? true)
+      :on-mouse-out #(set-hover? false)}
+     [:div.flex.flex-row.items-center.gap-2
+      (if (= view-feature-type :query-result)
+        [:div.font-medium.opacity-50.text-sm
+         (t (or title-key :views.table/default-title)
+            (count (:rows table)))]
+        (views-tab view-parent view-entity (:rows table) option hover?))]
+     [:div.view-actions.flex.items-center.gap-1.transition-opacity.ease-in.duration-300
+      {:class (if hover? "opacity-100" "opacity-75")}
+
+      (when (seq additional-actions)
+        [:<> (for [action additional-actions]
+               action)])
+      (when (seq sorting)
+        (view-sorting table columns sorting))
+
+      (filter-properties columns table)
+
+      (search input {:on-change set-input!
+                     :set-input! set-input!})
+
+      [:div.text-muted-foreground.text-sm
+       (pv/property-value view-entity (db/entity :logseq.property.view/type) {})]
+
+      (more-actions view-entity columns table)
+
+      (when add-new-object! (new-record-button table view-entity))]]))
+
 (rum/defc ^:large-vars/cleanup-todo view-inner < rum/static
-  [view-entity {:keys [data set-data! columns add-new-object! views-title title-key render-empty-title?] :as option
-                :or {render-empty-title? false}}
+  [view-entity {:keys [view-parent data set-data! columns add-new-object!] :as option}
    *scroller-ref]
   (let [[input set-input!] (rum/use-state "")
         sorting* (:logseq.property.table/sorting view-entity)
-        sorting (if (= sorting* :logseq.property/empty-placeholder) nil sorting*)
+        sorting (if (or (= sorting* :logseq.property/empty-placeholder) (empty? sorting*))
+                  [{:id :block/updated-at, :asc? false}]
+                  sorting*)
         [sorting set-sorting!] (rum/use-state sorting)
         filters (:logseq.property.table/filters view-entity)
         [filters set-filters!] (rum/use-state (or filters {}))
@@ -1488,39 +1651,17 @@
         table (shui/table-option table-map)
         *view-ref (rum/use-ref nil)
         display-type (or (:db/ident (get view-entity :logseq.property.view/type))
+                         (when (= (:view-type option) :linked-references)
+                           :logseq.property.view/type.list)
                          :logseq.property.view/type.table)
         gallery? (= display-type :logseq.property.view/type.gallery)]
-
     (run-effects! option table-map input input-filters set-input-filters! *scroller-ref gallery?)
 
     [:div.flex.flex-col.gap-2.grid
      {:ref *view-ref}
      (ui/foldable
-      [:div.flex.flex-1.flex-wrap.items-center.justify-between.gap-1
-       (when-not render-empty-title?
-         [:div.flex.flex-row.items-center.gap-2
-          (or
-           views-title
-           [:div.font-medium.opacity-50.text-sm
-            (t (or title-key :views.table/default-title)
-               (count (:rows table)))])])
-       [:div.view-actions.flex.items-center.gap-1
-
-        (when (seq sorting)
-          (view-sorting table columns sorting))
-
-        (filter-properties columns table)
-
-        (search input {:on-change set-input!
-                       :set-input! set-input!})
-
-        [:div.text-muted-foreground.text-sm
-         (pv/property-value view-entity (db/entity :logseq.property.view/type) {})]
-
-        (more-actions view-entity columns table)
-
-        (when add-new-object! (new-record-button table view-entity))]]
-      [:div.ls-view-body.flex.flex-col.gap-2.grid
+      (view-head view-parent view-entity table columns input sorting set-input! add-new-object! option)
+      [:div.ls-view-body.flex.flex-col.gap-2.grid.mt-1
        (filters-row table)
 
        (let [view-opts {:*scroller-ref *scroller-ref
@@ -1558,7 +1699,7 @@
            (view-cp view-entity table option view-opts)))]
       {:title-trigger? false})]))
 
-(rum/defcs view
+(rum/defcs view-container
   "Provides a view for data like query results and tagged objects, multiple
    layouts such as table and list are supported. Args:
    * view-entity: a db Entity
@@ -1571,13 +1712,36 @@
      * show-add-property?: whether to show `Add property`
      * add-property!: `fn` to add a new property (or column)
      * on-delete-rows: `fn` to trigger when deleting selected objects"
-  < rum/reactive
+  < rum/reactive db-mixins/query
   (rum/local nil ::scroller-ref)
   [state view-entity option]
-  (let [view-entity' (db/sub-block (:db/id view-entity))]
+  (let [view-entity' (or (db/sub-block (:db/id view-entity)) view-entity)]
     (rum/with-key (view-inner view-entity'
                               (cond-> option
                                 config/publishing?
                                 (dissoc :add-new-object!))
                               (::scroller-ref state))
       (str "view-" (:db/id view-entity')))))
+
+(rum/defc view < rum/static
+  [{:keys [view-parent view-feature-type view-entity] :as option}]
+  (let [[view-entity set-view-entity!] (hooks/use-state view-entity)
+        [views set-views!] (hooks/use-state nil)]
+    (hooks/use-effect!
+     (fn []
+       (let [repo (state/get-current-repo)]
+         (p/let [_result (db-async/<get-views repo (:db/id view-parent) view-feature-type)
+                 views (get-views view-parent view-feature-type)]
+           (if-let [v (first views)]
+             (do
+               (when-not view-entity (set-view-entity! v))
+               (set-views! views))
+             (when (and view-parent view-feature-type (not view-entity))
+               (p/let [new-view (create-view! view-parent view-feature-type)]
+                 (set-view-entity! new-view)
+                 (set-views! (concat views [new-view]))))))))
+     [])
+    (view-container view-entity (assoc option
+                                       :views views
+                                       :set-views! set-views!
+                                       :set-view-entity! set-view-entity!))))

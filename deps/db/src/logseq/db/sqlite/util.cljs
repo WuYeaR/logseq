@@ -3,12 +3,13 @@
   (:require [cljs-bean.transit]
             [clojure.string :as string]
             [cognitect.transit :as transit]
-            [datascript.core :as d]
+            [datascript.core]
             [datascript.impl.entity :as de]
             [datascript.transit :as dt]
             [logseq.common.util :as common-util]
             [logseq.common.uuid :as common-uuid]
-            [logseq.db.frontend.order :as db-order]
+            [logseq.db.common.order :as db-order]
+            [logseq.db.file-based.schema :as file-schema]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.property.type :as db-property-type]
             [logseq.db.frontend.schema :as db-schema]))
@@ -65,8 +66,8 @@
   "Returns schema for given repo"
   [repo]
   (if (db-based-graph? repo)
-    db-schema/schema-for-db-based-graph
-    db-schema/schema))
+    db-schema/schema
+    file-schema/schema))
 
 (def block-with-timestamps common-util/block-with-timestamps)
 
@@ -120,7 +121,7 @@
   (block-with-timestamps
    {:block/name (common-util/page-name-sanity-lc page-name)
     :block/title page-name
-    :block/uuid (d/squuid)
+    :block/uuid (common-uuid/gen-uuid :builtin-block-uuid page-name)
     :block/tags #{:logseq.class/Page}}))
 
 (defn kv
@@ -134,6 +135,12 @@
 (defn import-tx
   "Creates tx for an import given an import-type"
   [import-type]
-  [(kv :logseq.kv/import-type import-type)
-   ;; Timestamp is useful as this can occur much later than :logseq.kv/graph-created-at
-   (kv :logseq.kv/imported-at (common-util/time-ms))])
+  (concat [(kv :logseq.kv/import-type import-type)
+          ;; Timestamp is useful as this can occur much later than :logseq.kv/graph-created-at
+           (kv :logseq.kv/imported-at (common-util/time-ms))]
+          (mapv
+           ;; Don't import some RTC related entities
+           (fn [db-ident] [:db/retractEntity db-ident])
+           [:logseq.kv/graph-uuid
+            :logseq.kv/graph-local-tx
+            :logseq.kv/remote-schema-version])))

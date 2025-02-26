@@ -13,10 +13,11 @@
             [logseq.common.util.date-time :as date-time-util]
             [logseq.common.util.page-ref :as page-ref]
             [logseq.common.uuid :as common-uuid]
+            [logseq.db.common.order :as db-order]
             [logseq.db.frontend.class :as db-class]
             [logseq.db.frontend.content :as db-content]
             [logseq.db.frontend.db-ident :as db-ident]
-            [logseq.db.frontend.order :as db-order]
+            [logseq.db.frontend.malli-schema :as db-malli-schema]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.property.build :as db-property-build]
             [logseq.db.frontend.property.type :as db-property-type]
@@ -121,7 +122,7 @@
                      [property-map v])))))
        (db-property-build/build-property-values-tx-m new-block)))
 
-(defn extract-content-refs
+(defn- extract-content-refs
   "Extracts basic refs from :block/title like `[[foo]]` or `[[UUID]]`. Can't
   use db-content/get-matched-ids because of named ref support.  Adding more ref
   support would require parsing each block with mldoc and extracting with
@@ -258,7 +259,7 @@
                              (when class-parent
                                {:logseq.property/parent
                                 (or (class-db-ids class-parent)
-                                    (if (db-class/logseq-class? class-parent)
+                                    (if (db-malli-schema/class? class-parent)
                                       class-parent
                                       (throw (ex-info (str "No :db/id for " class-parent) {}))))})
                              (when class-properties
@@ -339,7 +340,18 @@
   [{:keys [pages-and-blocks properties classes]}]
   (let [page-block-properties (->> pages-and-blocks
                                    (map #(-> (:blocks %) vec (conj (:page %))))
-                                   (mapcat (fn [m] (mapcat #(into (:build/properties %)) m)))
+                                   (mapcat (fn build-node-props-vec [nodes]
+                                             (mapcat (fn [m]
+                                                       (if-let [pvalue-pages
+                                                                (->> (vals (:build/properties m))
+                                                                     (mapcat #(if (set? %) % [%]) )
+                                                                     (filter page-prop-value?)
+                                                                     (map second)
+                                                                     seq)]
+                                                         (into (vec (:build/properties m))
+                                                               (build-node-props-vec pvalue-pages))
+                                                         (:build/properties m)))
+                                                     nodes)))
                                    set)
         property-properties (->> (vals properties)
                                  (mapcat #(into [] (:build/properties %))))
@@ -351,20 +363,6 @@
                              (group-by first)
                              ((fn [x] (update-vals x #(mapv second %)))))]
     props-to-values))
-
-(defn- validate-options
-  [{:keys [properties] :as options}]
-  (when-let [errors (->> options (m/explain Options) me/humanize)]
-    (println "The build-blocks-tx has the following options errors:")
-    (pprint/pprint errors)
-    (throw (ex-info "Options validation failed" {:errors errors})))
-  (when-not (:auto-create-ontology? options)
-    (let [used-properties (get-used-properties-from-options options)
-          undeclared-properties (-> (set (keys used-properties))
-                                    (set/difference (set (keys properties)))
-                                    ((fn [x] (remove db-property/logseq-property? x))))]
-      (assert (empty? undeclared-properties)
-              (str "The following properties used in EDN were not declared in :properties: " undeclared-properties)))))
 
 ;; TODO: How to detect these idents don't conflict with existing? :db/add?
 (defn- create-all-idents
@@ -447,8 +445,10 @@
   "Splits a vec of maps tx into maps that can immediately be transacted,
   :init-tx, and maps that need to be transacted after :init-tx, :block-props-tx, in order to use
    the correct schema e.g. user properties with :db/cardinality"
-  [blocks-tx]
-  (let [property-idents (keep #(when (:db/cardinality %) (:db/ident %)) blocks-tx)
+  [blocks-tx properties]
+  (let [property-idents (concat (keep #(when (:db/cardinality %) (:db/ident %)) blocks-tx)
+                                ;; add properties for :build-existing-tx? since they aren't in blocks-tx
+                                (keys properties))
         [init-tx block-props-tx]
         (reduce (fn [[init-tx* block-props-tx*] m]
                   (let [props (select-keys m property-idents)]
@@ -482,9 +482,9 @@
              (map #(hash-map :page {:block/title %})))]
     (when (seq new-pages-from-refs)
       (println "Building additional pages from content refs:" (pr-str (mapv #(get-in % [:page :block/title]) new-pages-from-refs))))
-    (concat pages-and-blocks new-pages-from-refs)))
+    (concat new-pages-from-refs pages-and-blocks)))
 
-(defn add-new-pages-from-properties
+(defn- add-new-pages-from-properties
   [properties pages-and-blocks]
   (let [used-properties (get-used-properties-from-options {:pages-and-blocks pages-and-blocks :properties properties})
         existing-pages (->> pages-and-blocks (keep #(select-keys (:page %) [:build/journal :block/title])) set)
@@ -498,7 +498,8 @@
     (when (seq new-pages)
       (println "Building additional pages from property values:"
                (pr-str (mapv #(or (get-in % [:page :block/title]) (get-in % [:page :build/journal])) new-pages))))
-    (concat pages-and-blocks new-pages)))
+    ;; new-pages must come first because they are referenced by pages-and-blocks
+    (concat new-pages pages-and-blocks)))
 
 (defn- expand-build-children
   "Expands any blocks with :build/children to return a flattened vec with
@@ -561,14 +562,14 @@
   [property-pair-values]
   ;; Infer from first property pair is good enough for now
   (let [prop-value (some #(when (not= ::no-value %) %) property-pair-values)
-        prop-value' (if (coll? prop-value) (first prop-value) prop-value)
+        prop-value' (if (set? prop-value) (first prop-value) prop-value)
         prop-type (if prop-value'
                     (if (page-prop-value? prop-value')
-                      :node
+                      (if (:build/journal (second prop-value)) :date :node)
                       (db-property-type/infer-property-type-from-value prop-value'))
                     :default)]
     (cond-> {:logseq.property/type prop-type}
-      (coll? prop-value)
+      (set? prop-value)
       (assoc :db/cardinality :many))))
 
 (defn- auto-create-ontology
@@ -621,7 +622,36 @@
     ;; Properties first b/c they have schema and are referenced by all. Then classes b/c they can be referenced by pages. Then pages
     (split-blocks-tx (concat properties-tx'
                              classes-tx
-                             pages-and-blocks-tx))))
+                             pages-and-blocks-tx)
+                     properties)))
+
+;; Public API
+;; ==========
+
+(defn extract-from-blocks
+  "Given a vec of blocks and a fn which applied to a block returns a coll, this
+  returns the coll produced by applying f to all blocks including :build/children blocks"
+  [blocks f]
+  (let [apply-to-block-and-all-children
+        (fn apply-to-block-and-all-children [m f]
+          (into (f m)
+                (when-let [children (seq (:build/children m))]
+                  (mapcat #(apply-to-block-and-all-children % f) children))))]
+    (mapcat #(apply-to-block-and-all-children % f) blocks)))
+
+(defn validate-options
+  [{:keys [properties] :as options}]
+  (when-let [errors (->> options (m/explain Options) me/humanize)]
+    (println "The build-blocks-tx has the following options errors:")
+    (pprint/pprint errors)
+    (throw (ex-info "Options validation failed" {:errors errors})))
+  (when-not (:auto-create-ontology? options)
+    (let [used-properties (get-used-properties-from-options options)
+          undeclared-properties (-> (set (keys used-properties))
+                                    (set/difference (set (keys properties)))
+                                    ((fn [x] (remove db-property/logseq-property? x))))]
+      (assert (empty? undeclared-properties)
+              (str "The following properties used in EDN were not declared in :properties: " undeclared-properties)))))
 
 (defn ^:large-vars/doc-var build-blocks-tx
   "Given an EDN map for defining pages, blocks and properties, this creates a map
@@ -692,7 +722,8 @@
   [conn options]
   (let [options' (merge {:auto-create-ontology? true}
                         (if (vector? options) {:pages-and-blocks options} options))
-        {:keys [init-tx block-props-tx]} (build-blocks-tx options')]
+        {:keys [init-tx block-props-tx] :as _txs} (build-blocks-tx options')]
+    ;; (cljs.pprint/pprint _txs)
     (d/transact! conn init-tx)
     (when (seq block-props-tx)
       (d/transact! conn block-props-tx))))

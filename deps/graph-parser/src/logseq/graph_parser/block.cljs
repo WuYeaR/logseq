@@ -1,5 +1,6 @@
 (ns logseq.graph-parser.block
-  "Given mldoc ast, prepares block data in preparation for db transaction"
+  "Given mldoc ast, prepares block data in preparation for db transaction.
+   Used by file and DB graphs"
   (:require [clojure.set :as set]
             [clojure.string :as string]
             [clojure.walk :as walk]
@@ -13,8 +14,8 @@
             [logseq.common.util.page-ref :as page-ref]
             [logseq.common.uuid :as common-uuid]
             [logseq.db :as ldb]
+            [logseq.db.common.order :as db-order]
             [logseq.db.frontend.class :as db-class]
-            [logseq.db.frontend.order :as db-order]
             [logseq.graph-parser.mldoc :as gp-mldoc]
             [logseq.graph-parser.property :as gp-property]
             [logseq.graph-parser.text :as text]
@@ -190,8 +191,7 @@
                    ;; get links ast
                    (map last)
                    (mapcat (fn [value]
-                             (let [f (or (:extract-refs-from-property-value-fn user-config) extract-refs-from-property-value)]
-                               (f value (get user-config :format :markdown)))))
+                             (extract-refs-from-property-value value (get user-config :format :markdown))))
                    ;; comma separated collections
                    (concat (->> (map second properties)
                                 (filter coll?)
@@ -376,8 +376,10 @@
    & {:keys [page-uuid class? created-by] :as options}]
   (when-not (and db (common-util/uuid-string? original-page-name)
                  (not (ldb/page? (d/entity db [:block/uuid (uuid original-page-name)]))))
-    (let [original-page-name (-> (string/trim original-page-name)
-                                 sanitize-hashtag-name)
+    (let [db-based? (ldb/db-based-graph? db)
+          original-page-name (cond-> (string/trim original-page-name)
+                               db-based?
+                               sanitize-hashtag-name)
           [page _page-entity] (cond
                                 (and original-page-name (string? original-page-name))
                                 (page-name-string->map original-page-name db date-formatter
@@ -393,7 +395,7 @@
                                                  nil)]
                                   [page nil]))]
       (when page
-        (if (ldb/db-based-graph? db)
+        (if db-based?
           (let [tags (if class? [:logseq.class/Tag]
                          (or (:block/tags page)
                              [:logseq.class/Page]))]

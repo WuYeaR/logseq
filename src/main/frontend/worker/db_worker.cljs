@@ -28,12 +28,13 @@
             [frontend.worker.undo-redo2 :as undo-redo]
             [frontend.worker.util :as worker-util]
             [goog.object :as gobj]
+            [lambdaisland.glogi.console :as glogi-console]
             [logseq.common.config :as common-config]
             [logseq.common.util :as common-util]
             [logseq.db :as ldb]
-            [logseq.db.frontend.order :as db-order]
+            [logseq.db.common.order :as db-order]
+            [logseq.db.common.sqlite :as sqlite-common-db]
             [logseq.db.frontend.schema :as db-schema]
-            [logseq.db.sqlite.common-db :as sqlite-common-db]
             [logseq.db.sqlite.create-graph :as sqlite-create-graph]
             [logseq.db.sqlite.export :as sqlite-export]
             [logseq.db.sqlite.util :as sqlite-util]
@@ -113,7 +114,7 @@
   "Persistent-sorted-set has been broken, used addresses can't be found"
   [datascript-conn sqlite-db import-type]
   (let [datoms (get-all-datoms-from-sqlite-db sqlite-db)
-        db (d/init-db [] db-schema/schema-for-db-based-graph
+        db (d/init-db [] db-schema/schema
                       {:storage (storage/storage @datascript-conn)})
         db (d/db-with db
                       (map (fn [d]
@@ -911,9 +912,16 @@
 
   (export-edn
    [_this repo options]
-   (let [conn (worker-state/get-datascript-conn repo)
-         result (sqlite-export/build-export @conn (ldb/read-transit-str options))]
-     (ldb/write-transit-str result)))
+   (let [conn (worker-state/get-datascript-conn repo)]
+     (try
+       (->> (ldb/read-transit-str options)
+            (sqlite-export/build-export @conn)
+            ldb/write-transit-str)
+       (catch :default e
+         (js/console.error "export-edn error: " e)
+         (worker-util/post-message :notification
+                                   ["An unexpected error occurred during export. See the javascript console for details."
+                                    :error])))))
 
   (dangerousRemoveAllDbs
    [this repo]
@@ -951,14 +959,27 @@
     :delete-page (fn [repo conn [page-uuid]]
                    (delete-page! repo conn page-uuid))}))
 
+(defn- <ratelimit-file-writes!
+  []
+  (file/<ratelimit-file-writes!
+   (fn [col]
+     (when (seq col)
+       (let [repo (ffirst col)
+             conn (worker-state/get-datascript-conn repo)]
+         (if conn
+           (when-not (ldb/db-based-graph? @conn)
+             (file/write-files! conn col (worker-state/get-context)))
+           (js/console.error (str "DB is not found for " repo))))))))
+
 (defn init
   "web worker entry"
   []
+  (glogi-console/install!)
   (check-worker-scope!)
   (let [^js obj (DBWorker.)]
     (outliner-register-op-handlers!)
     (worker-state/set-worker-object! obj)
-    (file/<ratelimit-file-writes!)
+    (<ratelimit-file-writes!)
     (js/setInterval #(.postMessage js/self "keepAliveResponse") (* 1000 25))
     (Comlink/expose obj)
     (reset! worker-state/*main-thread (Comlink/wrap js/self))))

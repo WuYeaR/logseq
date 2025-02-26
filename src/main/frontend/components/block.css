@@ -72,7 +72,7 @@
 }
 
 .block-content-or-editor-inner {
-  @apply flex flex-1 flex-col w-full;
+  @apply flex flex-1 flex-col w-full pr-1;
 }
 
 .block-head-wrap {
@@ -379,7 +379,7 @@
 }
 
 .page-reference {
-  @apply inline rounded transition-[background];
+  @apply inline-flex flex-row items-center rounded transition-[background];
 
   .bracket {
     @apply opacity-30;

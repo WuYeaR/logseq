@@ -604,8 +604,9 @@ should be done through this fn in order to get global config and config defaults
              "MMM do, yyyy"))
       (common-config/get-date-formatter (get-config)))))
 
-(defn shortcuts []
-  (:shortcuts (get-config)))
+(defn custom-shortcuts []
+  (merge (storage/get :ls-shortcuts)
+         (:shortcuts (get-config))))
 
 (defn get-commands
   []
@@ -1166,6 +1167,13 @@ Similar to re-frame subscriptions"
 (defn get-selection-block-ids
   []
   (get-selected-block-ids (get-selection-blocks)))
+
+(defn sub-block-selected?
+  [block-id]
+  (assert (uuid? block-id))
+  (rum/react
+   (r/cached-derived-atom (:selection/blocks @state) [(get-current-repo) ::ui-selected block-id]
+                          (fn [blocks] (some #{block-id} (get-selected-block-ids blocks))))))
 
 (defn dom-clear-selection!
   []

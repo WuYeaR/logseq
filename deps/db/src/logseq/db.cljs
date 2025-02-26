@@ -6,18 +6,18 @@
             [clojure.walk :as walk]
             [datascript.core :as d]
             [datascript.impl.entity :as de]
-            [logseq.common.config :as common-config]
             [logseq.common.util :as common-util]
             [logseq.common.util.namespace :as ns-util]
             [logseq.common.util.page-ref :as page-ref]
             [logseq.common.uuid :as common-uuid]
+            [logseq.db.common.delete-blocks :as delete-blocks] ;; Load entity extensions
+            [logseq.db.common.entity-util :as common-entity-util]
+            [logseq.db.common.sqlite :as sqlite-common-db]
             [logseq.db.frontend.class :as db-class]
-            [logseq.db.frontend.delete-blocks :as delete-blocks] ;; Load entity extensions
             [logseq.db.frontend.entity-plus :as entity-plus]
             [logseq.db.frontend.entity-util :as entity-util]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.rules :as rules]
-            [logseq.db.sqlite.common-db :as sqlite-common-db]
             [logseq.db.sqlite.util :as sqlite-util])
   (:refer-clojure :exclude [object?]))
 
@@ -89,13 +89,13 @@
              (prn :debug-tx-data tx-data)
              (throw e))))))))
 
-(def page? entity-util/page?)
+(def page? common-entity-util/page?)
 (def internal-page? entity-util/internal-page?)
 (def class? entity-util/class?)
 (def property? entity-util/property?)
 (def closed-value? entity-util/closed-value?)
-(def whiteboard? entity-util/whiteboard?)
-(def journal? entity-util/journal?)
+(def whiteboard? common-entity-util/whiteboard?)
+(def journal? common-entity-util/journal?)
 (def hidden? entity-util/hidden?)
 (def object? entity-util/object?)
 (def asset? entity-util/asset?)
@@ -532,39 +532,6 @@
   [db]
   (when db (get-key-value db :logseq.kv/remote-schema-version)))
 
-;; File based fns
-(defn get-namespace-pages
-  "Accepts both sanitized and unsanitized namespaces"
-  [db namespace' {:keys [db-graph?]}]
-  (assert (string? namespace'))
-  (let [namespace'' (common-util/page-name-sanity-lc namespace')
-        pull-attrs  (cond-> [:db/id :block/name :block/title :block/namespace]
-                      (not db-graph?)
-                      (conj {:block/file [:db/id :file/path]}))]
-    (d/q
-     [:find [(list 'pull '?c pull-attrs) '...]
-      :in '$ '% '?namespace
-      :where
-      ['?p :block/name '?namespace]
-      (list 'namespace '?p '?c)]
-     db
-     (:namespace rules/rules)
-     namespace'')))
-
-(defn get-pages-by-name-partition
-  [db partition']
-  (when-not (string/blank? partition')
-    (let [partition'' (common-util/page-name-sanity-lc (string/trim partition'))
-          ids (->> (d/datoms db :aevt :block/name)
-                   (filter (fn [datom]
-                             (let [page (:v datom)]
-                               (string/includes? page partition''))))
-                   (map :e))]
-      (when (seq ids)
-        (d/pull-many db
-                     '[:db/id :block/name :block/title]
-                     ids)))))
-
 (defn get-all-properties
   [db]
   (->> (d/datoms db :avet :block/tags :logseq.class/Property)
@@ -611,12 +578,6 @@
      (let [class-parent-ids (set (map :db/id (get-classes-parents tags)))]
        (contains? (set/union class-parent-ids tags-ids) (:db/id class))))))
 
-(defn get-all-pages-views
-  [db]
-  (when (db-based-graph? db)
-    (when-let [page (get-page db common-config/views-page-name)]
-      (:logseq.property/_view-for page))))
-
 (defn inline-tag?
   [block-raw-title tag]
   (assert (string? block-raw-title) "block-raw-title should be a string")
@@ -640,3 +601,13 @@
     :logseq.class/Math-block :math
     :logseq.class/Quote-block :quote
     nil))
+
+(defn get-recent-updated-pages
+  [db]
+  (->> (d/datoms db :avet :block/updated-at)
+       (reverse)
+       (keep (fn [datom]
+               (let [e (d/entity db (:e datom))]
+                 (when (and (page? e) (not (hidden? e)))
+                   e))))
+       (take 30)))

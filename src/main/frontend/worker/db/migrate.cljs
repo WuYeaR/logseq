@@ -13,9 +13,9 @@
             [logseq.common.util.page-ref :as page-ref]
             [logseq.common.uuid :as common-uuid]
             [logseq.db :as ldb]
+            [logseq.db.common.order :as db-order]
             [logseq.db.frontend.class :as db-class]
             [logseq.db.frontend.content :as db-content]
-            [logseq.db.frontend.order :as db-order]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.property.build :as db-property-build]
             [logseq.db.frontend.schema :as db-schema]
@@ -611,6 +611,46 @@
    {:db/ident :logseq.property.view/type.gallery
     :logseq.property/icon {:type :tabler-icon :id "layout-grid"}}])
 
+(defn- migrate-views
+  [conn _search-db]
+  (let [db @conn
+        tags (->> (d/datoms db :avet :block/tags :logseq.class/Tag)
+                  (map (fn [d] (d/entity db (:e d)))))
+        properties (->> (d/datoms db :avet :block/tags :logseq.class/Property)
+                        (map (fn [d] (d/entity db (:e d)))))
+        tx-data (mapcat
+                 (fn [e]
+                   (let [id (:db/id e)
+                         ks [:logseq.property.table/sorting
+                             :logseq.property.table/filters
+                             :logseq.property.view/group-by-property
+                             :logseq.property.table/hidden-columns
+                             :logseq.property.table/ordered-columns
+                             :logseq.property.table/sized-columns
+                             :logseq.property.table/pinned-columns
+                             :logseq.property.view/type]
+                         view-properties (->> (keep (fn [k] (when-let [v (get (d/pull db [k] id) k)]
+                                                              [k v])) ks)
+                                              (into {}))]
+                     (when (seq view-properties)
+                       (let [view-page-id (:db/id (ldb/get-page db common-config/views-page-name))
+                             _ (when (nil? view-page-id)
+                                 (throw (ex-info "View page not exists" {})))
+                             view (-> view-properties
+                                      (merge {:logseq.property/view-for id
+                                              :block/uuid (common-uuid/gen-uuid :migrate-new-block-uuid
+                                                                                (keyword "temp-view-for"
+                                                                                         (string/replace (str (:block/uuid e)) "-" "")))
+                                              :block/title "All"
+                                              :block/parent view-page-id
+                                              :block/page view-page-id
+                                              :block/order (db-order/gen-key nil)})
+                                      (sqlite-util/block-with-timestamps))]
+                         (-> (mapv (fn [k] [:db/retract id k]) (keys view-properties))
+                             (conj view))))))
+                 (common-util/distinct-by :db/id (concat tags properties)))]
+    tx-data))
+
 (def ^:large-vars/cleanup-todo schema-version->updates
   "A vec of tuples defining datascript migrations. Each tuple consists of the
    schema version integer and a migration map. A migration map can have keys of :properties, :classes
@@ -713,10 +753,13 @@
    ;;;; schema-version format: "<major>.<minor>"
    ;;;; int number equals to "<major>" (without <minor>)
    ["64.1" {:properties [:logseq.property.view/group-by-property]
-            :fix add-view-icons}]])
+            :fix add-view-icons}]
+   ["64.2" {:properties [:logseq.property.view/feature-type]
+            :fix migrate-views}]])
 
-(let [max-schema-version (last (sort (map (comp (juxt :major :minor) db-schema/parse-schema-version first)
-                                          schema-version->updates)))
+(let [[major minor] (last (sort (map (comp (juxt :major :minor) db-schema/parse-schema-version first)
+                                     schema-version->updates)))
+      max-schema-version {:major major :minor minor}
       compare-result (db-schema/compare-schema-version db-schema/version max-schema-version)]
   (assert (>= 0 compare-result) [db-schema/version max-schema-version])
   (when (neg? compare-result)
@@ -937,6 +980,13 @@
                                         (into {} entity))
                           eid (:db/id entity)
                           fix (cond
+                                (and (:db/ident entity) (= "logseq.property.attribute" (namespace (:db/ident entity))))
+                                [[:db/retractEntity (:db/id entity)]]
+
+                                (and (:logseq.property.history/property entity)
+                                     (nil? (:logseq.property.history/block entity)))
+                                [[:db/retractEntity (:db/id entity)]]
+
                                 (and (:db/valueType entity)
                                      (not (or (:db/ident entity)
                                               (:db/cardinality entity))))
@@ -1018,13 +1068,13 @@
       (fix-properties! conn)
       (fix-block-timestamps! conn)
       (fix-missing-page-tag! conn)
-      (when (seq invalid-entity-ids)
-        (fix-invalid-data! conn invalid-entity-ids))
-
       ;; TODO: remove this after RTC db fixed
       (let [data (deprecate-logseq-user-ns conn nil)]
         (when (seq data)
           (d/transact! conn data {:fix-db? true})))
+      (when (seq invalid-entity-ids)
+        (fix-invalid-data! conn invalid-entity-ids))
+
       (catch :default e
         (js/console.error e)))))
 

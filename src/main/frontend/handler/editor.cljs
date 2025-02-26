@@ -55,9 +55,9 @@
             [logseq.common.util.block-ref :as block-ref]
             [logseq.common.util.page-ref :as page-ref]
             [logseq.db :as ldb]
+            [logseq.db.file-based.schema :as file-schema]
             [logseq.db.frontend.entity-plus :as entity-plus]
             [logseq.db.frontend.property :as db-property]
-            [logseq.db.frontend.schema :as db-schema]
             [logseq.graph-parser.block :as gp-block]
             [logseq.graph-parser.mldoc :as gp-mldoc]
             [logseq.graph-parser.property :as gp-property]
@@ -65,6 +65,7 @@
             [logseq.graph-parser.utf8 :as utf8]
             [logseq.outliner.core :as outliner-core]
             [logseq.outliner.property :as outliner-property]
+            [logseq.shui.popup.core :as shui-popup]
             [promesa.core :as p]
             [rum.core :as rum]))
 
@@ -385,7 +386,7 @@
         selection-end (util/get-selection-end input)
         [fst-block-text snd-block-text] (compute-fst-snd-block-text value selection-start selection-end)
         current-block (assoc block :block/title fst-block-text)
-        current-block (apply dissoc current-block db-schema/retract-attributes)
+        current-block (apply dissoc current-block file-schema/retract-attributes)
         new-m {:block/uuid (db/new-block-id)
                :block/title snd-block-text}
         next-block (-> (merge (select-keys block [:block/parent :block/format :block/page])
@@ -800,12 +801,14 @@
             (when-not (and has-children? left-has-children?)
               (when block-parent-id
                 (let [block-parent (gdom/getElement block-parent-id)
-                      sibling-block (if (:embed? config)
-                                      (util/get-prev-block-non-collapsed
-                                       block-parent
-                                       {:container (util/rec-get-blocks-container block-parent)})
-                                      (util/get-prev-block-non-collapsed-non-embed block-parent))
-                      {:keys [prev-block new-content edit-block-f]} (move-to-prev-block repo sibling-block format value)
+                      sibling-or-parent-block
+                      (if (:embed? config)
+                        (util/get-prev-block-non-collapsed
+                         block-parent
+                         {:container (util/rec-get-blocks-container block-parent)})
+                        (util/get-prev-block-non-collapsed-non-embed block-parent))
+                      {:keys [prev-block new-content edit-block-f]}
+                      (move-to-prev-block repo sibling-or-parent-block format value)
                       concat-prev-block? (boolean (and prev-block new-content))
                       transact-opts {:outliner-op :delete-blocks}]
                   (cond
@@ -817,7 +820,9 @@
                     concat-prev-block?
                     (let [children (:block/_parent (db/entity (:db/id block)))
                           db-based? (config/db-based-graph? repo)
+                          prev-block-is-not-parent? (not= (:block/uuid (:block/parent block)) (:block/uuid prev-block))
                           delete-prev-block? (and db-based?
+                                                  prev-block-is-not-parent?
                                                   (empty? (:block/tags block))
                                                   (not (:logseq.property.node/display-type block))
                                                   (seq (:block/properties block))
@@ -3235,10 +3240,14 @@
     (when-let [block-id (:block/uuid current-block)]
       (let [db? (config/db-based-graph? (state/get-current-repo))]
         (if (= format "embed")
-          (copy-block-ref! block-id
-                           (if db?
-                             block-ref/->block-ref
-                             #(str "{{embed ((" % "))}}")))
+          (if db?
+            (p/do!
+             (save-current-block!)
+             (util/copy-to-clipboard! (page-ref/->page-ref block-id)
+                                      {:graph (state/get-current-repo)
+                                       :blocks [{:block/uuid (:block/uuid current-block)}]
+                                       :embed-block? true}))
+            (copy-block-ref! block-id #(str "{{embed ((" % "))}}")))
           (copy-block-ref! block-id
                            (if db?
                              page-ref/->page-ref
@@ -3385,6 +3394,11 @@
           ;; simulate text selection
           (cursor/select-up-down input direction anchor cursor-rect)))
       (select-block-up-down direction))))
+
+(defn editor-commands-popup-exists?
+  []
+  (some->> (shui-popup/get-popups)
+           (some #(some-> % (:id) (str) (string/starts-with? ":editor.commands")))))
 
 (defn open-selected-block!
   [direction e]

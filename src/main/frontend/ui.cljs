@@ -580,7 +580,7 @@
 
 (defn keyboard-shortcut-from-config [shortcut-name & {:keys [pick-first?]}]
   (let [built-in-binding (:binding (get shortcut-config/all-built-in-keyboard-shortcuts shortcut-name))
-        custom-binding  (when (state/shortcuts) (get (state/shortcuts) shortcut-name))
+        custom-binding  (when (state/custom-shortcuts) (get (state/custom-shortcuts) shortcut-name))
         binding         (or custom-binding built-in-binding)]
     (if (and pick-first? (coll? binding))
       (first binding)
@@ -1151,12 +1151,13 @@
                                   (on-select' date))
                                 (notification/show! (str (pr-str value) " is not a valid date. Please try again") :warning)))))))})]))
 
-(rum/defc skeleton
-  []
-  [:div.space-y-2
-   (shui/skeleton {:class "h-8 w-1/3 mb-8"})
-   (shui/skeleton {:class "h-6 w-full"})
-   (shui/skeleton {:class "h-6 w-full"})])
+(comment
+  (rum/defc skeleton
+    []
+    [:div.space-y-2
+     (shui/skeleton {:class "h-8 w-1/3 mb-8"})
+     (shui/skeleton {:class "h-6 w-full"})
+     (shui/skeleton {:class "h-6 w-full"})]))
 
 (rum/defc indicator-progress-pie
   [percentage]

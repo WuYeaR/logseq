@@ -3,8 +3,15 @@
   (:require-macros [frontend.common.missionary])
   (:require [cljs.core.async.impl.channels]
             [clojure.core.async :as a]
+            [lambdaisland.glogi :as log]
             [missionary.core :as m]
-            [promesa.protocols :as pt]))
+            [promesa.protocols :as pt])
+  (:import [missionary Cancelled]))
+
+(extend-type Cancelled
+  IPrintWithWriter
+  (-pr-writer [o w _opts]
+    (write-all w "#missionary.Cancelled \"" (.-message o) "\"")))
 
 (defn continue-flow
   "ensure f is a continuous flow"
@@ -64,14 +71,13 @@
     (let [v (m/?> par flow)]
       (m/? (f v)))))
 
-(comment
-  (defn debounce
-    [duration-ms flow]
-    (m/ap
-      (let [x (m/?< flow)]
-        (try (m/? (m/sleep duration-ms x))
-             (catch Cancelled _
-               (m/amb)))))))
+(defn debounce
+  [duration-ms flow]
+  (m/ap
+    (let [x (m/?< flow)]
+      (try (m/? (m/sleep duration-ms x))
+           (catch Cancelled _
+             (m/amb))))))
 
 (defn throttle
   [dur-ms >in]
@@ -82,11 +88,11 @@
 (defn run-task
   "Return the canceler"
   [task key & {:keys [succ fail]}]
-  (task (or succ #(prn key :succ %)) (or fail #(js/console.log key %))))
+  (task (or succ #(log/info :key key :succ %)) (or fail #(log/info :key key :stopped %))))
 
 (defn run-task-throw
   [task key & {:keys [succ]}]
-  (task (or succ #(prn key :succ %)) #(throw (ex-info "task failed" {:key key :e %}))))
+  (task (or succ #(log/info :key key :succ %)) #(throw (ex-info "task stopped" {:key key :e %}))))
 
 (defonce ^:private *background-task-cancelers ; key -> canceler
   (volatile! {}))
@@ -143,6 +149,9 @@
     ;; missionary task
     (fn? chan-or-promise-or-task)
     chan-or-promise-or-task
+
+    (nil? chan-or-promise-or-task)
+    (m/sp)
 
     :else
     (throw (ex-info "Unsupported arg" {:type (type chan-or-promise-or-task)}))))

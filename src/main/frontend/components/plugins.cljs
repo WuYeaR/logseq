@@ -213,6 +213,11 @@
    [:p.text-sm
     (t :plugin/security-warning)]))
 
+(defn format-number [num & {:keys [precision] :or {precision 2}}]
+  (cond
+    (< num 1000) (str num)
+    (>= num 1000) (str (.toFixed (/ num 1000) precision) "k")))
+
 (rum/defc card-ctls-of-market < rum/static
   [item stat installed? installing-or-updating?]
   [:div.ctl
@@ -225,7 +230,7 @@
     (when-let [downloads (and stat (:total_downloads stat))]
       (when (and downloads (> downloads 0))
         [:li.flex.text-sm.items-center.pr-3
-         (svg/cloud-down 16) [:span.pl-1 downloads]]))]
+         (svg/cloud-down 16) [:span.pl-1 (format-number downloads)]]))]
 
    [:div.r.flex.items-center
 
@@ -650,7 +655,11 @@
 
       (when market?
         (let [aim-icon #(if (= sort-by %) "check" "circle")
-              items [{:title (t :plugin/downloads)
+              items [{:title (t :plugin/popular)
+                      :options {:on-click #(reset! *sort-by :default)}
+                      :icon (ui/icon (aim-icon :default))}
+
+                     {:title (t :plugin/downloads)
                       :options {:on-click #(reset! *sort-by :downloads)}
                       :icon (ui/icon (aim-icon :downloads))}
 
@@ -664,7 +673,7 @@
 
           (ui/button
            (ui/icon "arrows-sort")
-           :class (str (when-not (contains? #{:default :downloads} sort-by) "picked ") "sort-or-filter-by")
+           :class (str (when-not (contains? #{:default :popular} sort-by) "picked ") "sort-or-filter-by")
            :on-click #(shui/popup-show! (.-target %)
                                         (fn [{:keys [id]}]
                                           (render-classic-dropdown-items id items))
@@ -749,13 +758,63 @@
     [:div {:ref (.-ref inViewState)}
      [:p.py-1.text-center.opacity-0 (when (.-inView inViewState) "·")]]))
 
+(defn weighted-sort-by
+  [key pkgs]
+  (let [default? (or (nil? key) (= key :default))
+        grouped-pkgs (if default?
+                       (some->> pkgs
+                                (group-by (fn [{:keys [addedAt]}]
+                                            (and (number? addedAt)
+                                                 (< (- (js/Date.now) addedAt)
+                                         ;; under 6 days
+                                                    (* 1000 60 60 24 6)))))
+                                (into {}))
+                       {false pkgs})
+        pinned-pkgs (get grouped-pkgs true)
+        pkgs (get grouped-pkgs false)
+        ;; calculate weight
+        [key pkgs] (if default?
+                     (let [decay-factor 0.001
+                           download-weight 0.8
+                           star-weight 0.2]
+                       (letfn [(normalize [vals val]
+                                 (let [min-val (apply min vals)
+                                       max-val (apply max vals)]
+                                   (if (= max-val min-val) 0
+                                       (/ (- val min-val) (- max-val min-val)))))
+                               (time-diff-in-days [ts]
+                                 (when-let [time-diff (and (number? ts) (- (js/Date.now) ts))]
+                                   (/ time-diff (* 1000 60 60 24))))]
+                         [:weight
+                          (let [all-downloads (->> (map :downloads pkgs) (remove #(not (number? %))))
+                                all-stars (->> (map :stars pkgs) (remove #(not (number? %))))]
+                            (->> pkgs
+                                 (map (fn [{:keys [downloads stars latestAt] :as pkg}]
+                                        (let [downloads (if (number? downloads) downloads 1)
+                                              stars (if (number? stars) stars 1)
+                                              days-since-latest (time-diff-in-days latestAt)
+                                              decay (js/Math.exp (* -1 decay-factor days-since-latest))
+                                              normalized-downloads (normalize all-downloads downloads)
+                                              normalize-stars (normalize all-stars stars)
+                                              download-score (* normalized-downloads download-weight)
+                                              star-score (* normalize-stars star-weight)]
+                                          (assoc pkg :weight (+ download-score star-score decay)))))))]))
+                     [key pkgs])]
+    (->> (apply sort-by
+                (conj
+                 (case key
+                   :letters [#(util/safe-lower-case (or (:title %) (:name %)))]
+                   [key #(compare %2 %1)])
+                 pkgs))
+         (concat pinned-pkgs))))
+
 (rum/defcs ^:large-vars/data-var marketplace-plugins
   < rum/static rum/reactive
   plugin-items-list-mixins
   (rum/local false ::fetching)
   (rum/local "" ::search-key)
   (rum/local :plugins ::category)
-  (rum/local :downloads ::sort-by)                        ;; downloads / stars / letters / updates
+  (rum/local :default ::sort-by)        ;; default (weighted) / downloads / stars / letters / updates
   (rum/local :default ::filter-by)
   (rum/local nil ::error)
   (rum/local nil ::cached-query-flag)
@@ -811,17 +870,15 @@
                              filtered-pkgs)
         filtered-pkgs      (map #(if-let [stat (get stats (keyword (:id %)))]
                                    (let [downloads (:total_downloads stat)
-                                         stars     (:stargazers_count stat)]
-                                     (assoc % :stat stat
+                                         stars     (:stargazers_count stat)
+                                         latest-at (some-> (:updated_at stat) (js/Date.) (.getTime))]
+                                     (assoc %
+                                            :stat stat
                                             :stars stars
+                                            :latestAt latest-at
                                             :downloads downloads))
                                    %) filtered-pkgs)
-        sorted-plugins     (apply sort-by
-                                  (conj
-                                   (case @*sort-by
-                                     :letters [#(util/safe-lower-case (or (:title %) (:name %)))]
-                                     [@*sort-by #(compare %2 %1)])
-                                   filtered-pkgs))
+        sorted-plugins     (weighted-sort-by @*sort-by filtered-pkgs)
 
         fn-query-flag      (fn [] (string/join "_" (map #(str @%) [*filter-by *sort-by *search-key *category])))
         str-query-flag     (fn-query-flag)

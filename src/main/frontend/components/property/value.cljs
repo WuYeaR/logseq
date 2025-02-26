@@ -33,6 +33,7 @@
             [lambdaisland.glogi :as log]
             [logseq.common.util.macro :as macro-util]
             [logseq.db :as ldb]
+            [logseq.db.frontend.entity-util :as entity-util]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.property.type :as db-property-type]
             [logseq.outliner.property :as outliner-property]
@@ -114,43 +115,6 @@
       (and (= (:db/ident property) :logseq.property/default-value)
            (= (:logseq.property/type block) :number))))
 
-(defn <create-new-block!
-  [block property value & {:keys [edit-block?]
-                           :or {edit-block? true}}]
-  (when-not (or (:logseq.property/hide? property)
-                (= (:db/ident property) :logseq.property/default-value))
-    (ui/hide-popups-until-preview-popup!)
-    (shui/dialog-close!))
-  (p/let [block
-          (if (and (contains? #{:default :url} (:logseq.property/type property))
-                   (not (db-property/many? property)))
-            (p/let [existing-value (get block (:db/ident property))
-                    default-value (:logseq.property/default-value property)
-                    existing-value? (and (some? existing-value)
-                                         (not= (:db/ident existing-value) :logseq.property/empty-placeholder)
-                                         (not= (:db/id existing-value) (:db/id default-value)))
-                    new-block-id (when-not existing-value? (db/new-block-id))
-                    _ (when-not existing-value?
-                        (let [value' (if (and default-value (string? value) (string/blank? value))
-                                       (db-property/property-value-content default-value)
-                                       value)]
-                          (db-property-handler/create-property-text-block!
-                           (:db/id block)
-                           (:db/id property)
-                           value'
-                           {:new-block-id new-block-id})))]
-              (if existing-value? existing-value (db/entity [:block/uuid new-block-id])))
-            (p/let [new-block-id (db/new-block-id)
-                    _ (db-property-handler/create-property-text-block!
-                       (:db/id block)
-                       (:db/id property)
-                       value
-                       {:new-block-id new-block-id})]
-              (db/entity [:block/uuid new-block-id])))]
-    (when edit-block?
-      (editor-handler/edit-block! block :max {:container-id :unknown-container}))
-    block))
-
 (defn- get-operating-blocks
   [block]
   (let [selected-blocks (some->> (state/get-selection-block-ids)
@@ -159,6 +123,48 @@
                                  block-handler/get-top-level-blocks
                                  (remove ldb/property?))]
     (or (seq selected-blocks) [block])))
+
+(defn <create-new-block!
+  [block property value & {:keys [edit-block? batch-op?]
+                           :or {edit-block? true}}]
+  (when-not (or (:logseq.property/hide? property)
+                (= (:db/ident property) :logseq.property/default-value))
+    (ui/hide-popups-until-preview-popup!)
+    (shui/dialog-close!))
+  (let [<create-block (fn [block]
+                        (if (and (contains? #{:default :url} (:logseq.property/type property))
+                                 (not (db-property/many? property)))
+                          (p/let [existing-value (get block (:db/ident property))
+                                  default-value (:logseq.property/default-value property)
+                                  existing-value? (and (some? existing-value)
+                                                       (not= (:db/ident existing-value) :logseq.property/empty-placeholder)
+                                                       (not= (:db/id existing-value) (:db/id default-value)))
+                                  new-block-id (when-not existing-value? (db/new-block-id))
+                                  _ (when-not existing-value?
+                                      (let [value' (if (and default-value (string? value) (string/blank? value))
+                                                     (db-property/property-value-content default-value)
+                                                     value)]
+                                        (db-property-handler/create-property-text-block!
+                                         (:db/id block)
+                                         (:db/id property)
+                                         value'
+                                         {:new-block-id new-block-id})))]
+                            (if existing-value? existing-value (db/entity [:block/uuid new-block-id])))
+                          (p/let [new-block-id (db/new-block-id)
+                                  _ (db-property-handler/create-property-text-block!
+                                     (:db/id block)
+                                     (:db/id property)
+                                     value
+                                     {:new-block-id new-block-id})]
+                            (db/entity [:block/uuid new-block-id]))))]
+    (p/let [blocks (if batch-op?
+                     (p/all (map <create-block (get-operating-blocks block)))
+                     (p/let [new-block (<create-block block)]
+                       [new-block]))]
+      (let [first-block (first blocks)]
+        (when edit-block?
+          (editor-handler/edit-block! first-block :max {:container-id :unknown-container}))
+        first-block))))
 
 (defn <set-class-as-property!
   [repo property]
@@ -504,15 +510,19 @@
                          :datetime? datetime?
                          :multiple-values? multiple-values?
                          :on-change (fn [value]
-                                      (property-handler/set-block-property! repo (:block/uuid block)
-                                                                            (:db/ident property)
-                                                                            (if datetime?
-                                                                              value
-                                                                              (:db/id value))))
+                                      (let [blocks (get-operating-blocks block)]
+                                        (property-handler/batch-set-block-property! repo (map :block/uuid blocks)
+                                                                                    (:db/ident property)
+                                                                                    (if datetime?
+                                                                                      value
+                                                                                      (:db/id value)))))
                          :del-btn? (some? value)
-                         :on-delete (fn []
-                                      (property-handler/set-block-property! repo (:block/uuid block)
-                                                                            (:db/ident property) nil)
+                         :on-delete (fn [e]
+                                      (util/stop-propagation e)
+                                      (let [blocks (get-operating-blocks block)]
+                                        (property-handler/batch-set-block-property! repo (map :block/uuid blocks)
+                                                                                    (:db/ident property)
+                                                                                    nil))
                                       (shui/popup-hide!))}))))
 
 (defn- <create-page-if-not-exists!
@@ -604,7 +614,7 @@
     "hash"
     (ldb/property? node)
     "letter-p"
-    (ldb/page? node)
+    (entity-util/page? node)
     "page"
     :else
     "letter-n"))
@@ -732,7 +742,7 @@
                                                   (when-not (string/blank? (string/trim chosen))
                                                     (p/let [result (<create-page-if-not-exists! block property classes' chosen)]
                                                       [result true])))
-                                      _ (when (and (integer? id) (not (ldb/page? (db/entity id))))
+                                      _ (when (and (integer? id) (not (entity-util/page? (db/entity id))))
                                           (db-async/<get-block repo id))]
                                 (p/do!
                                  (if id
@@ -947,7 +957,7 @@
               (property-normal-block-value block property v-block)
 
               ;; page/class/etc.
-              (ldb/page? v-block)
+              (entity-util/page? v-block)
               (rum/with-key
                 (page-cp {:disable-preview? true
                           :tag? class?} v-block)
@@ -997,7 +1007,7 @@
        closed-values?
        (closed-value-item value opts)
 
-       (or (ldb/page? value)
+       (or (entity-util/page? value)
            (and (seq (:block/tags value))
                 ;; FIXME: page-cp should be renamed to node-cp and
                 ;; support this case and maybe other complex cases.

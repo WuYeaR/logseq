@@ -1,25 +1,43 @@
 (ns frontend.worker.file
   "Save pages to files for file-based graphs"
-  (:require [clojure.core.async :as async]
-            [clojure.string :as string]
-            [clojure.set :as set]
-            [frontend.common.file.core :as common-file]
-            [logseq.outliner.tree :as otree]
-            [lambdaisland.glogi :as log]
+  (:require [cljs-time.coerce :as tc]
             [cljs-time.core :as t]
-            [cljs-time.coerce :as tc]
-            [frontend.worker.util :as worker-util]
-            [frontend.common.async-util :as async-util]
+            [clojure.core.async :as async]
+            [clojure.set :as set]
+            [clojure.string :as string]
             [datascript.core :as d]
-            [logseq.db :as ldb]
-            [malli.core :as m]
+            [frontend.common.async-util :as async-util]
+            [frontend.common.file.core :as common-file]
+            [frontend.common.file.util :as wfu]
             [frontend.worker.state :as worker-state]
+            [frontend.worker.util :as worker-util]
             [goog.object :as gobj]
-            [logseq.common.util :as common-util]))
+            [lambdaisland.glogi :as log]
+            [logseq.common.date :as common-date]
+            [logseq.common.path :as path]
+            [logseq.common.util :as common-util]
+            [logseq.db :as ldb]
+            [logseq.db.file-based.entity-util :as file-entity-util]
+            [logseq.outliner.tree :as otree]
+            [malli.core :as m]))
 
-(def *writes common-file/*writes)
-(def dissoc-request! common-file/dissoc-request!)
-(def conj-page-write! common-file/conj-page-write!)
+(defonce *writes (atom {}))
+(defonce *request-id (atom 0))
+
+(defn- conj-page-write!
+  [page-id]
+  (let [request-id (swap! *request-id inc)]
+    (swap! *writes assoc request-id page-id)
+    request-id))
+
+(defn- dissoc-request!
+  [request-id]
+  (when-let [page-id (get @*writes request-id)]
+    (let [old-page-request-ids (keep (fn [[r p]]
+                                       (when (and (= p page-id) (<= r request-id))
+                                         r)) @*writes)]
+      (when (seq old-page-request-ids)
+        (swap! *writes (fn [x] (apply dissoc x old-page-request-ids)))))))
 
 (defonce file-writes-chan
   (let [coercer (m/coercer [:catn
@@ -58,11 +76,80 @@
             :block/parent) ;; these are auto-generated for whiteboard shapes
     (dissoc block :db/id :block/page)))
 
+(defn- transact-file-tx-if-not-exists!
+  [conn page-block ok-handler context]
+  (when (:block/name page-block)
+    (let [format (name (get page-block :block/format (:preferred-format context)))
+          date-formatter (:date-formatter context)
+          title (string/capitalize (:block/name page-block))
+          whiteboard-page? (file-entity-util/whiteboard? page-block)
+          format (if whiteboard-page? "edn" format)
+          journal-page? (common-date/valid-journal-title? title date-formatter)
+          journal-title (common-date/normalize-journal-title title date-formatter)
+          journal-page? (and journal-page? (not (string/blank? journal-title)))
+          filename (if journal-page?
+                     (common-date/date->file-name journal-title (:journal-file-name-format context))
+                     (-> (or (:block/title page-block) (:block/name page-block))
+                         wfu/file-name-sanity))
+          sub-dir (cond
+                    journal-page?    (:journals-directory context)
+                    whiteboard-page? (:whiteboards-directory context)
+                    :else            (:pages-directory context))
+          ext (if (= format "markdown") "md" format)
+          file-rpath (path/path-join sub-dir (str filename "." ext))
+          file {:file/path file-rpath}
+          tx [{:file/path file-rpath}
+              {:block/name (:block/name page-block)
+               :block/file file}]]
+      (ldb/transact! conn tx)
+      (when ok-handler (ok-handler)))))
+
+(defn- remove-transit-ids [block] (dissoc block :db/id :block/file))
+
+(defn- save-tree-aux!
+  [repo db page-block tree blocks-just-deleted? context request-id]
+  (let [page-block (d/pull db '[*] (:db/id page-block))
+        init-level 1
+        file-db-id (-> page-block :block/file :db/id)
+        file-path (-> (d/entity db file-db-id) :file/path)
+        result (if (and (string? file-path) (not-empty file-path))
+                 (let [new-content (if (file-entity-util/whiteboard? page-block)
+                                     (->
+                                      (wfu/ugly-pr-str {:blocks tree
+                                                        :pages (list (remove-transit-ids page-block))})
+                                      (string/triml))
+                                     (common-file/tree->file-content repo db tree {:init-level init-level} context))]
+                   (when-not (and (string/blank? new-content) (not blocks-just-deleted?))
+                     (let [files [[file-path new-content]]]
+                       (when (seq files)
+                         (let [page-id (:db/id page-block)]
+                           (wfu/post-message :write-files {:request-id request-id
+                                                           :page-id page-id
+                                                           :repo repo
+                                                           :files files})
+                           :sent)))))
+                 ;; In e2e tests, "card" page in db has no :file/path
+                 (js/console.error "File path from page-block is not valid" page-block tree))]
+    (when-not (= :sent result)          ; page may not exists now
+      (dissoc-request! request-id))))
+
+(defn save-tree!
+  [repo conn page-block tree blocks-just-deleted? context request-id]
+  {:pre [(map? page-block)]}
+  (when repo
+    (let [ok-handler #(save-tree-aux! repo @conn page-block tree blocks-just-deleted? context request-id)
+          file (or (:block/file page-block)
+                   (when-let [page-id (:db/id (:block/page page-block))]
+                     (:block/file (d/entity @conn page-id))))]
+      (if file
+        (ok-handler)
+        (transact-file-tx-if-not-exists! conn page-block ok-handler context)))))
+
 (defn do-write-file!
   [repo conn page-db-id outliner-op context request-id]
   (let [page-block (d/pull @conn '[*] page-db-id)
         page-db-id (:db/id page-block)
-        whiteboard? (ldb/whiteboard? page-block)
+        whiteboard? (file-entity-util/whiteboard? page-block)
         blocks-count (ldb/get-page-blocks-count @conn page-db-id)
         blocks-just-deleted? (and (zero? blocks-count)
                                   (contains? #{:delete-blocks :move-blocks} outliner-op))]
@@ -81,7 +168,7 @@
             (let [tree-or-blocks (if whiteboard? blocks
                                      (otree/blocks->vec-tree repo @conn blocks (:db/id page-block)))]
               (if page-block
-                (common-file/save-tree! repo conn page-block tree-or-blocks blocks-just-deleted? context request-id)
+                (save-tree! repo conn page-block tree-or-blocks blocks-just-deleted? context request-id)
                 (do
                   (js/console.error (str "can't find page id: " page-db-id))
                   (dissoc-request! request-id)))))))
@@ -116,15 +203,7 @@
       (async/put! file-writes-chan [repo page-id (:outliner-op tx-meta) (tc/to-long (t/now)) request-id]))))
 
 (defn <ratelimit-file-writes!
-  []
+  [flush-fn]
   (async-util/<ratelimit file-writes-chan batch-write-interval
-                          :filter-fn (fn [_] true)
-                          :flush-fn
-                          (fn [col]
-                            (when (seq col)
-                              (let [repo (ffirst col)
-                                    conn (worker-state/get-datascript-conn repo)]
-                                (if conn
-                                  (when-not (ldb/db-based-graph? @conn)
-                                    (write-files! conn col (worker-state/get-context)))
-                                  (js/console.error (str "DB is not found for ") repo)))))))
+                         :filter-fn (fn [_] true)
+                         :flush-fn flush-fn))

@@ -1,5 +1,6 @@
 (ns logseq.db.sqlite.create-graph-test
   (:require [cljs.test :refer [deftest is testing]]
+            [clojure.data :as data]
             [clojure.set :as set]
             [clojure.string :as string]
             [datascript.core :as d]
@@ -134,7 +135,7 @@
         "New graph has no validation errors")))
 
 (deftest property-types
-  (let [conn (d/create-conn db-schema/schema-for-db-based-graph)
+  (let [conn (d/create-conn db-schema/schema)
         _ (d/transact! conn (sqlite-create-graph/build-db-initial-data
                              (pr-str {:macros {"docs-base-url" "https://docs.logseq.com/#/page/$1"}})))]
 
@@ -150,3 +151,21 @@
 
       (is (empty? (map :entity (:errors (db-validate/validate-db! @conn))))
           "Graph with different :url blocks has no validation errors"))))
+
+(deftest build-db-initial-data-test
+  (testing "idempotent initial-data"
+    (letfn [(remove-ignored-attrs&entities [init-data]
+              (let [[before after] (split-with #(not= :logseq.kv/graph-created-at (:db/ident %)) init-data)
+                    init-data* (concat before (rest after))]
+                (map (fn [ent] (dissoc ent
+                                       :block/created-at :block/updated-at
+                                       :file/last-modified-at :file/created-at
+                                       :block/order ;; TODO: block/order should be same as well
+                                       ))
+                     init-data*)))]
+      (let [[first-only second-only common]
+            (data/diff (remove-ignored-attrs&entities (sqlite-create-graph/build-db-initial-data ""))
+                       (remove-ignored-attrs&entities (sqlite-create-graph/build-db-initial-data "")))]
+        (is (and (every? nil? first-only)
+                 (every? nil? second-only))
+            (pr-str [first-only second-only common]))))))

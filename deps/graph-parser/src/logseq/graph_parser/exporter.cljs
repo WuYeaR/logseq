@@ -16,11 +16,11 @@
             [logseq.common.util.page-ref :as page-ref]
             [logseq.common.uuid :as common-uuid]
             [logseq.db :as ldb]
+            [logseq.db.common.order :as db-order]
             [logseq.db.frontend.class :as db-class]
             [logseq.db.frontend.content :as db-content]
             [logseq.db.frontend.db-ident :as db-ident]
             [logseq.db.frontend.malli-schema :as db-malli-schema]
-            [logseq.db.frontend.order :as db-order]
             [logseq.db.frontend.property :as db-property]
             [logseq.db.frontend.property.build :as db-property-build]
             [logseq.db.frontend.property.type :as db-property-type]
@@ -1559,7 +1559,8 @@
   "Builds options for use with export-doc-files"
   [config options]
   (-> {:extract-options {:date-formatter (common-config/get-date-formatter config)
-                         :user-config config
+                         ;; Remove config keys that break importing
+                         :user-config (dissoc config :property-pages/excludelist :property-pages/enabled?)
                          :filename-format (or (:file/name-format config) :legacy)
                          :verbose (:verbose options)}
        :user-config config

@@ -1,18 +1,19 @@
 (ns frontend.worker.handler.page.file-based.rename
   "File based page rename"
-  (:require [frontend.worker.handler.page :as worker-page]
-            [datascript.core :as d]
-            [clojure.string :as string]
+  (:require [clojure.string :as string]
             [clojure.walk :as walk]
-            [logseq.common.util.page-ref :as page-ref]
+            [datascript.core :as d]
             [frontend.common.file.util :as wfu]
-            [logseq.db :as ldb]
-            [logseq.common.util :as common-util]
+            [frontend.common.file-based.db :as common-file-db]
+            [frontend.worker.handler.page :as worker-page]
             [logseq.common.config :as common-config]
-            [logseq.graph-parser.text :as text]
+            [logseq.common.util :as common-util]
+            [logseq.common.util.page-ref :as page-ref]
+            [logseq.db :as ldb]
+            [logseq.db.common.order :as db-order]
+            [logseq.db.file-based.entity-util :as file-entity-util]
             [logseq.graph-parser.property :as gp-property]
-            [logseq.db.frontend.order :as db-order]))
-
+            [logseq.graph-parser.text :as text]))
 
 (defn- replace-page-ref-aux
   "Unsanitized names"
@@ -102,10 +103,10 @@
   [refs from-id to-id]
   (if to-id
     (->> refs
-        (remove #{{:db/id from-id}})
-        (cons {:db/id to-id})
-        (distinct)
-        (vec))
+         (remove #{{:db/id from-id}})
+         (cons {:db/id to-id})
+         (distinct)
+         (vec))
     ;; New page not exists so that we keep using the old page's block as a ref
     refs))
 
@@ -205,7 +206,7 @@
   [db old-page-name new-page-name]
   (let [page (d/entity db [:block/name old-page-name])
         file (:block/file page)]
-    (when (and file (not (ldb/journal? page)))
+    (when (and file (not (file-entity-util/journal? page)))
       (let [old-path (:file/path file)
             new-file-name (wfu/file-name-sanity new-page-name) ;; w/o file extension
             new-path (compute-new-file-path old-path new-file-name)]
@@ -253,7 +254,7 @@
 (defn- rename-namespace-pages!
   "Original names (unsanitized only)"
   [repo conn config old-name new-name]
-  (let [pages (ldb/get-namespace-pages @conn old-name {})
+  (let [pages (common-file-db/get-namespace-pages @conn old-name)
         page (d/pull @conn '[*] [:block/name (common-util/page-name-sanity-lc old-name)])
         pages (cons page pages)]
     (doseq [{:block/keys [name title]} pages]
@@ -273,8 +274,8 @@
   (let [nested-page-str (page-ref/->page-ref (common-util/page-name-sanity-lc old-ns-name))
         ns-prefix-format-str (str page-ref/left-brackets "%s/")
         ns-prefix       (common-util/format ns-prefix-format-str (common-util/page-name-sanity-lc old-ns-name))
-        nested-pages    (ldb/get-pages-by-name-partition @conn nested-page-str)
-        nested-pages-ns (ldb/get-pages-by-name-partition @conn ns-prefix)]
+        nested-pages    (common-file-db/get-pages-by-name-partition @conn nested-page-str)
+        nested-pages-ns (common-file-db/get-pages-by-name-partition @conn ns-prefix)]
     (when nested-pages
       ;; rename page "[[obsidian]] is a tool" to "[[logseq]] is a tool"
       (doseq [{:block/keys [name title]} nested-pages]
@@ -317,8 +318,8 @@
       :invalid-empty-name
 
       (and page-e new-page-e
-           (or (ldb/whiteboard? page-e)
-               (ldb/whiteboard? new-page-e)))
+           (or (file-entity-util/whiteboard? page-e)
+               (file-entity-util/whiteboard? new-page-e)))
       :merge-whiteboard-pages
 
       (and old-name new-name name-changed?)

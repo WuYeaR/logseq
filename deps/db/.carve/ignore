@@ -1,5 +1,7 @@
 ;; API
-logseq.db.frontend.rules/query-dsl-rules
+logseq.db.file-based.rules/rules
+;; API
+logseq.db.file-based.schema/retract-attributes
 ;; API
 logseq.db.frontend.rules/db-query-dsl-rules
 ;; API
